@@ -119,6 +119,14 @@ Intake also records what it was **not** told. Unstated assumptions appear in the
 brief as an `assumptions` array and are surfaced in the final report, so a wrong
 assumption is visible in a short file rather than buried in generated code.
 
+**Intake reads the project report.** If `<target>/.shipyard/PROJECT-REPORT.md`
+exists (§8.1), it is included in the intake prompt. This is what gives the
+system continuity across runs: it knows what was already built against this
+target and which ideas already failed, so a new run does not re-attempt a
+known-dead approach. The project report is the only artifact that crosses a run
+boundary, and it is code-generated, so this costs nothing in accumulated
+context.
+
 ### 3.3 Stage 2 — Survey
 
 Skipped when the target directory is empty. Otherwise, four read-only agents run
@@ -128,9 +136,17 @@ survey does not change with repository size:
 1. **Structure and stack** — layout, language, framework, build system
 2. **Test setup** — test runner, existing test command, coverage conventions
 3. **Conventions** — naming, error handling, module patterns, lint rules
-4. **Relevant modules** — the code the brief actually touches
+4. **Documentation** — `README`, `docs/`, `CONTRIBUTING`, architecture notes,
+   and any design docs the repository already carries
+5. **Relevant modules** — the code the brief actually touches
 
 Their outputs merge into one `codebase-map.json`.
+
+The documentation surveyor matters more than it looks. A repository's own
+documentation states intent that the code cannot: why a module exists, what
+invariants hold, which approaches were already rejected. Feeding that into
+planning is what separates a plan that fits the project from one that merely
+compiles against it.
 
 Surveying once and caching the result is deliberate. N build agents each
 exploring the same repository independently costs N times the tokens and
@@ -147,6 +163,14 @@ File ownership is how parallel work stays conflict-free. The planner assigns
 disjoint file sets. The harbormaster validates this: overlapping ownership
 between two concurrently-runnable tasks is a plan validation error, and the
 manager is re-prompted with the specific conflict.
+
+**The manager also writes a spec page.** Alongside `plan.json` it produces
+`spec.md` — prose explaining what it intends to build and why, grounded in the
+brief, the codebase map, and the repository's own documentation. The plan is
+what the harbormaster executes; the spec page is what you read to judge whether
+the manager understood the job before any code exists. On cycles 2 and 3 a
+fresh manager writes a new spec page, so the three are directly comparable and
+show how the approach changed.
 
 ### 3.5 Stage 4 — Build
 
@@ -180,6 +204,51 @@ A single agent reads the artifacts — never the raw transcripts — and writes
 `report.md`. Report contents are specified in §8.
 
 ---
+
+## 3.8 The agent definition folder
+
+Roles are defined by files, not by code. Shipyard ships an `agents/` directory
+where each role is one markdown file with YAML frontmatter:
+
+```
+shipyard/agents/
+  manager.md     decompose, triage, decide done
+  dev.md         write code in an assigned worktree
+  tester.md      run criteria, return a verdict
+  surveyor.md    read an existing repository
+  intake.md      turn an idea into a brief
+  reporter.md    turn artifacts into the report
+```
+
+```markdown
+---
+name: manager
+model: claude-opus-4-8
+tools: [Read, Grep, Glob]
+delegatesTo: [dev, tester]
+---
+You are the manager. You decompose a brief into tasks...
+```
+
+**Why files:** tuning a role is editing a prompt, not editing a program. The
+behaviour of the whole system is adjustable without a build step, and the
+definitions are reviewable in a diff.
+
+**Startup sequence for any agent.** The harbormaster loads the role file,
+assembles the digest and task slice, and spawns the agent with the file's body
+as its system prompt and its `tools` list as the agent's entire tool set. The
+agent reads its brief, does one job, returns structured output, and exits.
+
+**Delegation is a decision, not an action.** A manager has no tool that spawns
+agents. It returns a decision naming the role and the tasks to delegate; the
+harbormaster loads that role's file and does the spawning. This is deliberate:
+if a manager spawned its own workers it would have to hold their results in its
+own context, which is exactly what must not happen.
+
+**The permission floor is code, not file.** The loader validates every role
+file against a hard-coded floor before use. A `tester.md` that declares `Write`
+or `Edit` is a startup error, not a silently weakened tester. Role files can
+narrow permissions below the floor; they cannot widen them past it.
 
 ## 4. The context guarantee
 
@@ -343,23 +412,29 @@ a run.
 ### 7.1 Run directory
 
 ```
-<target>/.shipyard/runs/<run-id>/
-  state.json              harbormaster state machine — source of truth
-  brief.json              stage 1
-  codebase-map.json       stage 2
-  learnings.md            accumulated across cycles
-  report.md               stage 7 — what the user reads
-  cycles/
-    1/
-      plan.json
-      tasks/<task-id>.json
-      test-report.json
-      defects.json
-      fix-rounds/<n>/...
-    2/ ...
-  agents/
-    <agent-id>.jsonl      raw transcripts, write-only
+<target>/.shipyard/
+  PROJECT-REPORT.md         cumulative across every run — see §8.1
+  runs/<run-id>/
+    state.json              harbormaster state machine — source of truth
+    brief.json              stage 1
+    codebase-map.json       stage 2
+    learnings.md            accumulated across cycles
+    report.md               stage 7 — what the user reads
+    cycles/
+      1/
+        spec.md             the manager's written intent for this cycle
+        plan.json
+        tasks/<task-id>.json
+        test-report.json
+        defects.json
+        fix-rounds/<n>/...
+      2/ ...
+    agents/
+      <agent-id>.jsonl      raw transcripts, write-only
 ```
+
+Role definitions live in Shipyard's own `agents/` directory (§3.8), not in the
+target — they are shared across every project.
 
 Archived failed branches are named `shipyard/run-<id>/cycle-<n>-failed`.
 
@@ -394,6 +469,21 @@ The report is the product. Its sections:
 Failure reports are more detailed than success reports. A failed run must
 explain itself well enough that the user can decide what to change about the
 idea.
+
+### 8.1 The project report
+
+`<target>/.shipyard/PROJECT-REPORT.md` accumulates across every run against that
+target. Each completed run appends one entry: date, idea, verdict, what shipped,
+what failed and why, and the branch name.
+
+It is append-only and generated by code from each run's `state.json` — no agent
+writes it, so it cannot drift from what actually happened.
+
+**Why it is separate from the run report.** The run report answers "what
+happened this time." The project report answers "what has this project been
+through" — which ideas were tried, which failed and for what reason, what is
+already built. It is the file to read before starting a new run on a target you
+have used before, and it is the natural input to a future run's intake stage.
 
 ---
 
