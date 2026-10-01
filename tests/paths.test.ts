@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
@@ -32,7 +32,23 @@ describe('assertGitRepo', () => {
     await expect(assertGitRepo(dir)).rejects.toThrow(/not a git repository/i)
   })
 
-  it('rejects a path that does not exist', async () => {
-    await expect(assertGitRepo('/nonexistent/path/xyz')).rejects.toThrow()
+  // A missing path must not be reported as "not a git repository" — telling a user to
+  // `git init` a directory that does not exist is wrong advice, and a typo'd --target
+  // is the most likely way anyone hits this.
+  it('rejects a path that does not exist, without suggesting git init', async () => {
+    await expect(assertGitRepo('/nonexistent/path/xyz')).rejects.toThrow(
+      /does not exist/i,
+    )
+    await expect(assertGitRepo('/nonexistent/path/xyz')).rejects.not.toThrow(
+      /git init/i,
+    )
+  })
+
+  it('rejects a path that exists but is not a directory', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sy-file-'))
+    const file = join(dir, 'afile.txt')
+    await writeFile(file, 'hello')
+    await expect(assertGitRepo(file)).rejects.toThrow(/not a directory/i)
+    await expect(assertGitRepo(file)).rejects.not.toThrow(/git init/i)
   })
 })
