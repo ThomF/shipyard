@@ -77,7 +77,7 @@ tests/                  mirrors src/
 
 **Interfaces:**
 - Consumes: nothing (first task)
-- Produces: `BriefSchema`, `CodebaseMapSchema`, `PlanSchema`, `TaskSchema`, `AcceptanceCriterionSchema` and inferred types `Brief`, `CodebaseMap`, `Plan`, `PlanTask`, `AcceptanceCriterion`
+- Produces: `BriefSchema`, `CodebaseMapSchema`, `PlanSchema`, `PlanTaskSchema`, `AcceptanceCriterionSchema` and inferred types `Brief`, `CodebaseMap`, `Plan`, `PlanTask`, `AcceptanceCriterion`
 
 - [ ] **Step 1: Create package.json**
 
