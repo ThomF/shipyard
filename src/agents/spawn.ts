@@ -26,15 +26,28 @@ export type SpawnOptions<T> = {
 
 export async function spawnAgent<T>(opts: SpawnOptions<T>): Promise<AgentOutcome<T>> {
   const { role, agentId, transcriptPath } = opts
-  await mkdir(dirname(transcriptPath), { recursive: true })
 
   const controller = new AbortController()
   let timedOut = false
-  const timer = setTimeout(() => { timedOut = true; controller.abort() }, opts.timeoutMs)
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  // Resolving this promise is what ends the spawn on timeout. Aborting the controller only
+  // *asks* a cooperative query to stop; a query that ignores the signal and never settles
+  // must not be able to stall the run, so the race below never waits on the stream.
+  const expiry = new Promise<{ outcome: 'timeout' }>(resolve => {
+    timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+      resolve({ outcome: 'timeout' })
+    }, opts.timeoutMs)
+  })
 
   let result: Record<string, unknown> | undefined
 
-  try {
+  const consume = async (): Promise<{ outcome: 'consumed' }> => {
+    // Inside the race: a filesystem failure here is a dead agent, not a thrown promise.
+    await mkdir(dirname(transcriptPath), { recursive: true })
+
     const stream = opts.query({
       prompt: opts.prompt,
       options: {
@@ -53,14 +66,29 @@ export async function spawnAgent<T>(opts: SpawnOptions<T>): Promise<AgentOutcome
       await appendFile(transcriptPath, JSON.stringify(message) + '\n')
       if (message.type === 'result') result = message
     }
+    return { outcome: 'consumed' }
+  }
+
+  try {
+    const consumed = consume()
+    // An abandoned stream may reject long after the race is decided; keep that from
+    // surfacing as an unhandled rejection once we have already returned.
+    consumed.catch(() => {})
+
+    const settled = await Promise.race([consumed, expiry])
+    if (settled.outcome === 'timeout') {
+      return { status: 'dead', reason: 'timeout', detail: `exceeded ${opts.timeoutMs}ms`, agentId }
+    }
   } catch (err) {
-    clearTimeout(timer)
     if (timedOut) {
       return { status: 'dead', reason: 'timeout', detail: `exceeded ${opts.timeoutMs}ms`, agentId }
     }
     return { status: 'dead', reason: 'error', detail: String(err), agentId }
+  } finally {
+    // Cleared on every path, including the race won by timeout, so no pending handle
+    // keeps the process alive after the outcome is decided.
+    clearTimeout(timer)
   }
-  clearTimeout(timer)
 
   if (timedOut) {
     return { status: 'dead', reason: 'timeout', detail: `exceeded ${opts.timeoutMs}ms`, agentId }

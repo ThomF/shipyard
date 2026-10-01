@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -128,4 +128,44 @@ describe('spawnAgent', () => {
     expect(out.status).toBe('dead')
     if (out.status === 'dead') expect(out.detail).toMatch(/boom/)
   })
+
+  // Fix round 1, finding 1: a filesystem failure preparing the transcript must be a dead
+  // agent, not a thrown promise. Callers branch on `status`; they do not wrap in try/catch.
+  it('is dead when the transcript directory cannot be created', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sy-spawn-'))
+    const blocker = join(dir, 'afile')
+    await writeFile(blocker, 'not a directory')
+    const opts = await base({
+      cwd: dir,
+      // Parent is a regular file, so mkdir -p fails with ENOTDIR.
+      transcriptPath: join(blocker, 'sub', 'x.jsonl'),
+      query: fakeQuery([
+        { type: 'result', subtype: 'success', structured_output: { passed: true }, total_cost_usd: 0 },
+      ]),
+    })
+    const out = await spawnAgent(opts as never)
+    expect(out.status).toBe('dead')
+    if (out.status === 'dead') {
+      expect(out.reason).toBe('error')
+      expect(out.detail).toMatch(/ENOTDIR|ENOENT|EEXIST/)
+    }
+  })
+
+  // Fix round 1, finding 2: the wall clock must force a return. A query that ignores the
+  // AbortSignal and never settles must not stall the orchestrator forever.
+  it('is dead with reason timeout when the stream never settles at all', async () => {
+    const opts = await base({
+      timeoutMs: 20,
+      // Never yields, never returns, never throws, and ignores the abort signal.
+      query: () => (async function* () {
+        await new Promise(() => {})
+        yield { type: 'result', subtype: 'success' } as never
+      })(),
+    })
+    const started = Date.now()
+    const out = await spawnAgent(opts as never)
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(out.status).toBe('dead')
+    if (out.status === 'dead') expect(out.reason).toBe('timeout')
+  }, 3000)
 })
