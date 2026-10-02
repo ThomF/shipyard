@@ -27,6 +27,17 @@ const ROOTS = process.argv.slice(2).length ? process.argv.slice(2) : [join(homed
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')) } catch { return null } }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
+/**
+ * Name a run's project from its path. A worktree lives at
+ * `<repo>/.claude/worktrees/<name>`, so the repo — not the worktree — is the
+ * project, and the worktree is noted separately.
+ */
+function label(projectDir) {
+  const wt = projectDir.match(/^(.*)\/\.claude\/worktrees\/([^/]+)$/)
+  if (wt) return { project: basename(wt[1]), worktree: wt[2] }
+  return { project: basename(projectDir), worktree: null }
+}
+
 /** Collect runs from one `<project>/.shipyard/runs` directory. */
 function collect(projectDir, out) {
   const runsDir = join(projectDir, '.shipyard', 'runs')
@@ -41,8 +52,9 @@ function collect(projectDir, out) {
     const keys = Object.keys(crit)
     let mtime = 0
     try { mtime = statSync(join(dir, 'state.json')).mtimeMs } catch {}
+    const { project, worktree } = label(projectDir)
     out.push({
-      project: basename(projectDir), id: r.name, dir, state, mtime,
+      project, worktree, id: r.name, dir, state, mtime,
       goal: brief?.goal || state.request || '(no brief recorded)',
       pass: keys.filter(k => crit[k] === 'pass').length,
       fail: keys.filter(k => crit[k] === 'fail').length,
@@ -51,18 +63,32 @@ function collect(projectDir, out) {
   }
 }
 
+const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.superpowers', '.demo'])
+
 /**
- * A root may itself be a project, or a folder full of them. Check both, so
- * `~/Code` and `~/Code/grid-city` are each a valid thing to point at.
+ * Find every `.shipyard/runs` under a root, at any reasonable depth.
+ *
+ * Depth matters more than it looks: a session that isolates its work in a git
+ * worktree puts the run at `<repo>/.claude/worktrees/<name>/.shipyard`, five
+ * levels down. A scan that only checks the repo root silently finds nothing
+ * while the run is going fine.
  */
+function walk(dir, depth, out) {
+  if (depth > 6) return
+  let entries
+  try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+  if (entries.some(e => e.isDirectory() && e.name === '.shipyard')) collect(dir, out)
+  for (const e of entries) {
+    if (!e.isDirectory() || SKIP.has(e.name) || e.name === '.shipyard') continue
+    walk(join(dir, e.name), depth + 1, out)
+  }
+}
+
 function scan() {
   const out = []
   for (const root of ROOTS) {
     if (!existsSync(root)) continue
-    collect(root, out)
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
-      if (entry.isDirectory()) collect(join(root, entry.name), out)
-    }
+    walk(root, 0, out)
   }
   return out
     .filter((r, i, a) => a.findIndex(x => x.dir === r.dir) === i)
@@ -135,7 +161,7 @@ function page(runs) {
       <div class="lamp l-${esc(v)}"></div>
       <div>
         <p class="goal"><span class="proj">${esc(r.project)}</span><a href="/r?d=${encodeURIComponent(r.dir)}">${esc(r.goal)}</a></p>
-        <div class="sub">${esc(r.id)} · cycle ${esc(r.state.cycle || '?')}/${esc(r.state.maxCycles || 3)} · stage ${esc(r.state.stage || '—')}${r.state.branch ? ' · ' + esc(r.state.branch) : ''}${lost ? ` · <span style="color:var(--red)">${lost} lost</span>` : ''}</div>
+        <div class="sub">${r.worktree ? `<span style="color:var(--amber-dim)">worktree ${esc(r.worktree)}</span> · ` : ''}${esc(r.id)} · cycle ${esc(r.state.cycle || '?')}/${esc(r.state.maxCycles || 3)} · stage ${esc(r.state.stage || '—')}${r.state.branch ? ' · ' + esc(r.state.branch) : ''}${lost ? ` · <span style="color:var(--red)">${lost} lost</span>` : ''}</div>
         ${r.total ? `<div class="mini"><i class="p" style="width:${pct}%"></i><i class="f" style="width:${fpct}%"></i><i class="u" style="width:${100 - pct - fpct}%"></i></div>` : ''}
       </div>
       <div class="right"><span class="score">${r.total ? r.pass + '/' + r.total : '—'}</span>
