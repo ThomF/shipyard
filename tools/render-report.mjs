@@ -52,7 +52,12 @@ const agents = listFiles(join(runDir, 'agents'))
   .filter(f => f.endsWith('.md'))
   .map(f => ({ id: basename(f, '.md'), body: readText(join(runDir, 'agents', f)) }))
 
-const data = { state, brief, map, ledger, reportMd, cycles, agents, runDir }
+// A run still in flight auto-refreshes; a finished one stops, so an archived
+// report does not spin forever in a background tab.
+const STAGES = ['intake', 'survey', 'plan', 'build', 'test', 'fix', 'report', 'done']
+const live = Boolean(state.stage) && state.stage !== 'done' && (state.verdict ?? 'pending') === 'pending'
+
+const data = { state, brief, map, ledger, reportMd, cycles, agents, runDir, live, stages: STAGES }
 
 // </script> inside inlined JSON would close the tag early.
 const payload = JSON.stringify(data).replace(/</g, '\\u003c')
@@ -61,7 +66,8 @@ const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SHIPYARD // ${state.runId ?? basename(runDir)}</title>
+${live ? '<meta http-equiv="refresh" content="4">' : ''}
+<title>${live ? '◉ ' : ''}SHIPYARD // ${state.runId ?? basename(runDir)}</title>
 <style>
 :root{
   --bg:#0b0a08; --panel:#15120d; --panel2:#1d1812;
@@ -130,6 +136,23 @@ details .inner{padding:11px}
 .empty{color:var(--grey);font-style:italic}
 footer{color:var(--grey);font-size:11px;letter-spacing:.14em;text-align:center;padding:18px 0}
 @media print{body::before,body::after{display:none}}
+
+/* ── live telemetry ─────────────────────────────────────── */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(420%)}}
+@keyframes flicker{0%,100%{opacity:1}97%{opacity:1}98%{opacity:.82}99%{opacity:1}}
+header{animation:flicker 7s infinite}
+.live{border-color:var(--green)!important;color:var(--green)!important}
+.live .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:7px;animation:pulse 1.1s infinite;box-shadow:0 0 6px var(--green)}
+.scan{position:relative;overflow:hidden;height:3px;background:#0c0a07;border:1px solid var(--rule);border-left:0;border-right:0;margin:0}
+.scan i{position:absolute;top:0;left:0;height:100%;width:24%;background:linear-gradient(90deg,transparent,var(--amber),transparent);animation:sweep 2.4s linear infinite}
+/* stage pipeline */
+.pipe{display:flex;gap:0;margin:12px 0 2px;border:1px solid var(--rule);background:#0c0a07}
+.pipe div{flex:1;text-align:center;padding:7px 2px;font-size:10px;letter-spacing:.18em;color:#3b3225;border-right:1px solid var(--rule);position:relative}
+.pipe div:last-child{border-right:0}
+.pipe div.done{color:var(--amber-dim);background:#140f09}
+.pipe div.now{color:#0b0a08;background:var(--amber);font-weight:700;animation:pulse 1.6s infinite}
+.tele{display:flex;justify-content:space-between;font-size:10px;letter-spacing:.2em;color:var(--grey);margin-top:6px}
 </style>
 </head>
 <body>
@@ -153,18 +176,32 @@ const total = keys.length || 1;
 
 const parts = [];
 
+const nowIdx = D.stages.indexOf(st.stage);
+const pipeline = D.stages.filter(s => s !== 'done').map((s, i) => {
+  const cls = D.live && i === nowIdx ? 'now' : (nowIdx > i || !D.live ? 'done' : '');
+  return \`<div class="\${cls}">\${s.toUpperCase()}</div>\`;
+}).join('');
+
 parts.push(\`
 <header>
-  <h1>SHIPYARD<small>AUTONOMOUS DEV YARD // RUN RECORD</small></h1>
+  <h1>SHIPYARD<small>AUTONOMOUS DEV YARD // \${D.live ? 'YARD ACTIVE' : 'RUN RECORD'}</small></h1>
   <div class="meta">
-    <span class="chip verdict v-\${esc(verdict)}">\${esc(verdict)}</span>
+    \${D.live
+      ? '<span class="chip verdict live"><span class="dot"></span>WORKING</span>'
+      : \`<span class="chip verdict v-\${esc(verdict)}">\${esc(verdict)}</span>\`}
     <span class="chip">RUN <b>\${esc(st.runId || '—')}</b></span>
     <span class="chip">CYCLE <b>\${esc(st.cycle || '?')}/\${esc(st.maxCycles || 3)}</b></span>
-    <span class="chip">STAGE <b>\${esc(st.stage || '—')}</b></span>
+    \${st.fixRound ? \`<span class="chip">FIX ROUND <b>\${esc(st.fixRound)}/\${esc(st.maxFixRounds || 3)}</b></span>\` : ''}
     <span class="chip">BRANCH <b>\${esc(st.branch || '—')}</b></span>
     <span class="chip">TARGET <b>\${esc(st.target || '—')}</b></span>
   </div>
+  <div class="pipe">\${pipeline}</div>
+  <div class="tele">
+    <span>\${D.live ? '◉ TELEMETRY LIVE — REFRESHING EVERY 4s' : '· TRANSMISSION ENDED'}</span>
+    <span>STAGE: \${esc((st.stage || 'unknown').toUpperCase())}</span>
+  </div>
 </header>
+\${D.live ? '<div class="scan"><i></i></div>' : ''}
 <div class="hazard"></div>\`);
 
 if (st.request || D.brief?.goal) {
@@ -230,7 +267,12 @@ if (D.ledger) {
   parts.push(\`<section><h2>Harbormaster log</h2><div class="body"><pre>\${esc(D.ledger)}</pre></div></section>\`);
 }
 
-parts.push(\`<div class="hazard"></div><footer>SHIPYARD // \${esc(D.runDir)}</footer>\`);
+parts.push(\`<div class="hazard"></div><footer>
+  SHIPYARD // \${esc(D.runDir)}<br>
+  \${D.live
+    ? 'YARD ACTIVE — this page reloads itself. Leave the tab open.'
+    : 'TRANSMISSION ENDED — this page is final and will not reload.'}
+</footer>\`);
 document.getElementById('app').innerHTML = parts.join('');
 </script>
 </body>

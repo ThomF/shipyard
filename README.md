@@ -85,16 +85,17 @@ build.
 Shipyard creates a branch in that repo, works there, and writes the report
 there. It does not merge and does not push — the branch is yours to review.
 
-When it finishes, render the dashboard from the Shipyard repo and open it:
+**Watch it work.** Shipyard writes a live dashboard as it goes and tells you the
+path as soon as it exists. Open it once and leave the tab open — it reloads
+itself every 4 seconds while the run is in flight, and stops on its own when the
+run ends.
 
 ```bash
-cd ~/Code/shipyard
-npm run report ~/Code/some-project/.shipyard/runs/<run-id>
-open ~/Code/some-project/.shipyard/runs/<run-id>/report.html
+open .shipyard/runs/<run-id>/report.html
 ```
 
-(The renderer lives here rather than in your project, so it runs from a shell
-after the session finishes — Shipyard writes `report.md` either way.)
+You see the stage pipeline advance, acceptance criteria flip to pass, tasks go
+from running to done, and any agent that dies and gets respawned.
 
 > **First run:** point it at something small and real so you can watch the
 > delegation happen before trusting it with anything that matters.
@@ -169,8 +170,12 @@ run if it isn't.
 ## The report
 
 Every run produces a self-contained `report.html` — one file, data inlined, no
-server. Open it by double-clicking. It commits alongside the work, so the
-evidence travels with the branch.
+server, no port. Open it by double-clicking. It commits alongside the work, so
+the evidence travels with the branch.
+
+While a run is in flight the page reloads itself every 4 seconds, so it doubles
+as a live view of the yard. When the run ends it stops reloading and becomes the
+permanent record.
 
 It shows the verdict, every acceptance criterion and its status, how the manager
 delegated, which tasks owned which files, the tester's actual failure output,
