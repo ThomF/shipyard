@@ -1,0 +1,192 @@
+<div align="center">
+
+```
+ ░▒▓ S H I P Y A R D ▓▒░
+ AUTONOMOUS DEV YARD
+```
+
+**Point it at a repo and a feature request. It plans, builds, tests, fixes, and hands you a report.**
+
+</div>
+
+---
+
+## What it is
+
+Shipyard is an autonomous development team. You give it a repository and a
+feature request; it decomposes the work, delegates to dev agents, commands
+testers, fixes what fails, and leaves a branch plus a written report.
+
+You read the report. You don't watch the run.
+
+A **harbormaster** runs the circuit and delegates to **devs** (who write code)
+and **testers** (who decide whether it works). Testers never fix what they find
+— they report defects, the harbormaster triages them, and devs do the fixing.
+Three fix rounds per cycle, three cycles maximum, then it stops and tells you
+what it learned.
+
+## The constraint that shapes everything
+
+**No agent lives long enough to fill its context.** A manager that has been
+running for hours makes worse decisions than one that just started, so Shipyard
+never lets one run that long.
+
+Every agent is spawned for a single question, writes its full output to a file,
+returns under 150 words, and exits. Durable memory lives in `state.json` and
+`ledger.md` on disk — not in a conversation. An agent dying mid-run is routine:
+its partial work is in the tree, so `git diff` is the handoff, and a fresh agent
+picks it up.
+
+That property is the whole design. Everything else follows from it.
+
+## Quick start
+
+```bash
+git clone <your-fork> shipyard && cd shipyard
+claude
+```
+
+Then, in the session:
+
+```
+/shipyard ../some-repo "add CSV export to the admin orders page"
+```
+
+Shipyard creates a branch in the **target** repo, works there, and writes the
+report there. It does not merge and does not push — the branch is yours to
+review.
+
+When it finishes, open the dashboard:
+
+```bash
+open ../some-repo/.shipyard/runs/<run-id>/report.html
+```
+
+> **First run:** point it at something small and real so you can watch the
+> delegation happen before trusting it with anything that matters.
+
+## The circuit
+
+```
+     feature request + target repo
+                 │
+      ┌──────────▼──────────┐
+      │ INTAKE              │  turns the request into acceptance criteria
+      │                     │  specific enough to pass or fail without judgement
+      └──────────┬──────────┘
+      ┌──────────▼──────────┐
+      │ SURVEY   ×5 parallel│  structure · tests · conventions
+      │                     │  documentation · relevant modules
+      └──────────┬──────────┘     (skipped for an empty target)
+      ┌──────────▼──────────┐
+      │ PLAN                │  task DAG + a spec page explaining the approach
+      │                     │  two concurrent tasks may never own the same file
+      └──────────┬──────────┘
+      ┌──────────▼──────────┐
+      │ BUILD    devs       │  each owns a disjoint file set
+      └──────────┬──────────┘
+      ┌──────────▼──────────┐
+      │ TEST     tester     │  verdict per criterion, with real output as evidence
+      └──────────┬──────────┘
+            pass │ fail
+                 │   └──► TRIAGE ──► fix ──► re-test   ×3 rounds
+                 │              └──► still failing? new manager, new cycle ×3
+                 ▼
+              REPORT
+```
+
+**File ownership is how parallel work stays safe.** Two tasks that could run at
+the same time must never claim the same file. Two tasks that share a file are
+fine when one depends on the other — they run in sequence. The plan is rejected
+and re-planned if it gets this wrong.
+
+## Roles are files, not code
+
+Every role is a markdown file in `agents/` with frontmatter and a system prompt:
+
+```markdown
+---
+name: tester
+model: claude-opus-4-8
+tools: [Read, Grep, Glob, Bash]
+---
+You are a tester. You verify acceptance criteria and report a verdict.
+You do NOT fix anything...
+```
+
+**Tuning the team is editing a prompt, not editing a program.** Want devs more
+conservative? Change `dev.md`. Want a different model? Change one line. No
+rebuild.
+
+| Role | Writes code | Decides "done" |
+|---|---|---|
+| `manager.md` | no | yes — triages and assigns |
+| `dev.md` | **yes** | no |
+| `tester.md` | no | reports verdict only |
+| `surveyor.md` | no | no |
+| `intake.md` | no | no |
+| `reporter.md` | no | no |
+
+Separation of duties is checked, not trusted. Testers are dispatched without
+write tools — but they need `Bash` to run tests, and Bash can write files, so
+after a tester runs the harbormaster verifies the tree is clean and fails the
+run if it isn't.
+
+## The report
+
+Every run produces a self-contained `report.html` — one file, data inlined, no
+server. Open it by double-clicking. It commits alongside the work, so the
+evidence travels with the branch.
+
+It shows the verdict, every acceptance criterion and its status, how the manager
+delegated, which tasks owned which files, the tester's actual failure output,
+any agents that died, and the harbormaster's log.
+
+`.shipyard/PROJECT-REPORT.md` accumulates one entry per run against that target,
+so a later run knows what was already tried and what already failed.
+
+## Two ways to run it
+
+**Session-driven** (default, what `/shipyard` uses). Claude Code reads
+`SHIPYARD.md` and acts as the harbormaster. Runs on an ordinary Claude Code
+session — no separate API entitlements.
+
+**Standalone binary** (on the `core-runtime` branch, not merged). A TypeScript
+program that spawns its own agents via the Claude Agent SDK and runs unattended
+— you can close the laptop on an overnight job. Covers intake → survey → plan;
+the build/test/fix half is not implemented yet. Needs API access to the model
+named in the role files.
+
+Both read the same `agents/*.md` files and produce the same artifacts.
+
+## Layout
+
+```
+SHIPYARD.md              the harbormaster's operating manual
+agents/*.md              role definitions — edit these to tune the team
+.claude/commands/        the /shipyard slash command
+tools/render-report.mjs  run directory → self-contained report.html
+docs/superpowers/        design spec and implementation plan
+src/, tests/             the standalone binary (core-runtime branch)
+```
+
+## Safety
+
+- Writes are confined to the target repo and its `.shipyard/` directory
+- Nothing is deleted — failed cycles are archived as tags, never destroyed
+- Never force-pushes, resets hard, or drops database objects
+- The test command comes from the survey, not from an agent's invention, so no
+  agent can substitute a weaker command to go green
+- Secrets are redacted from reports and artifacts
+- It does not merge and does not push
+
+## Generated code standards
+
+Devs are held to these:
+
+- Parameterized queries — never string concatenation into SQL
+- No credentials in source; environment variable placeholders only
+- Error handling required; no bare `try` blocks or swallowed exceptions
+- Code touching customer data carries a data-classification comment
+- Third-party dependencies reported with their license type
+- Generated queries flagged for verification against the production schema

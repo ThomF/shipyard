@@ -1,3 +1,10 @@
 node_modules/
 dist/
+
+# Shipyard run artifacts live in the TARGET repo, not here
 .shipyard/
+
+# Subagent build scratch — briefs, reports, ledger. Local only.
+.superpowers/
+
+.DS_Store
