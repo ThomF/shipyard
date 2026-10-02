@@ -17,6 +17,21 @@ const brief: Brief = {
 
 const state = initState({ runId: 'r1', target: '/t', idea: 'csv to json', createdAt: 'now' })
 
+/** The exact notice buildDigest must emit, intact, whenever it returns a partial picture. */
+const TRUNCATION_NOTICE =
+  'NOTE: this digest was truncated to fit the cap; it is a partial picture.'
+
+function briefWithCriteria(count: number, statementLength: number): Brief {
+  return {
+    ...brief,
+    acceptanceCriteria: Array.from({ length: count }, (_, i) => ({
+      id: `AC${i}`,
+      statement: 's'.repeat(statementLength),
+      verifiable: true,
+    })),
+  }
+}
+
 describe('buildDigest', () => {
   it('states the goal', () => {
     expect(buildDigest({ state, brief })).toContain('Build a CSV to JSON converter')
@@ -58,6 +73,7 @@ describe('buildDigest', () => {
     const d = buildDigest({ state, brief, plan: huge, taskStatus })
     expect(d.length).toBeLessThanOrEqual(DIGEST_CAP)
     expect(d).toMatch(/truncated/i)
+    expect(d).toContain(TRUNCATION_NOTICE)
   })
 
   it('keeps failing criteria even when it has to truncate', () => {
@@ -74,5 +90,37 @@ describe('buildDigest', () => {
     })
     expect(d).toMatch(/AC1.*fail/)
     expect(d).toMatch(/AC2.*fail/)
+    expect(d.length).toBeLessThanOrEqual(DIGEST_CAP)
+    expect(d).toContain(TRUNCATION_NOTICE)
+  })
+
+  it('announces truncation even when non-droppable content alone blows the cap', () => {
+    // No plan at all, so there is nothing droppable to shed: the only way to fit
+    // is to hard-cut real content, which must still be announced.
+    const d = buildDigest({ state, brief: briefWithCriteria(500, 100) })
+    expect(d.length).toBeLessThanOrEqual(DIGEST_CAP)
+    expect(d).toContain(TRUNCATION_NOTICE)
+  })
+
+  it('either renders completely or says it did not, across the cap boundary', () => {
+    // Sweeps sizes that straddle DIGEST_CAP. The guarantee under test: the result
+    // is always within the cap, and whenever it is not the complete rendering the
+    // full notice is present intact.
+    for (let statementLength = 40; statementLength <= 140; statementLength++) {
+      const b = briefWithCriteria(60, statementLength)
+      const d = buildDigest({ state, brief: b })
+      expect(d.length).toBeLessThanOrEqual(DIGEST_CAP)
+      const lastLine = `  - AC59 [untested] ${'s'.repeat(statementLength)}`
+      if (!d.includes(lastLine)) {
+        expect(d).toContain(TRUNCATION_NOTICE)
+      }
+    }
+  })
+
+  it('emits the notice as an intact prefix, never a partial fragment', () => {
+    const d = buildDigest({ state, brief: briefWithCriteria(500, 100) })
+    expect(d.startsWith(TRUNCATION_NOTICE)).toBe(true)
+    // A mangled note would contain a proper prefix of the notice but not all of it.
+    expect(d.indexOf(TRUNCATION_NOTICE)).toBe(0)
   })
 })
