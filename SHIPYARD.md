@@ -59,9 +59,24 @@ Only devs write code. The manager decides and never touches files.
 
 1. The target must be a git repository with a clean working tree. If it is
    dirty, stop and tell the user — never build on top of uncommitted work.
-2. Create a branch in the **target** repo: `shipyard/<slug>-<run-id>`, where
-   `<slug>` is 3-5 words from the request and `<run-id>` is a UTC timestamp like
-   `2026-10-02T14-30-00`.
+2. Create a branch **in place**, in the target's own working directory:
+
+   ```bash
+   git checkout -b shipyard/<slug>-<run-id>
+   ```
+
+   where `<slug>` is 3-5 words from the request and `<run-id>` is a UTC
+   timestamp like `2026-10-02T14-30-00`.
+
+   **Do not create a git worktree.** Isolation sounds safer, but it puts the
+   work in a directory the user is not looking at — their dev server watches
+   the working copy, so a worktree means they cannot see anything being built
+   until it is over. Branching in place lets them keep `npm run dev` running
+   and watch the feature appear as agents write files. That live feedback is
+   worth more here than isolation, and the branch already protects `main`.
+
+   Tell the user which branch you created and that their working copy is now on
+   it, so nothing about the switch is a surprise.
 3. Create `.shipyard/runs/<run-id>/` in the target repo. Everything below is
    written there, and it is committed with the work — the report is evidence
    about this branch and travels with it.

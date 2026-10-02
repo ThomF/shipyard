@@ -274,6 +274,37 @@ parts.push(\`<div class="hazard"></div><footer>
     : 'TRANSMISSION ENDED — this page is final and will not reload.'}
 </footer>\`);
 document.getElementById('app').innerHTML = parts.join('');
+
+// A meta-refresh is a full reload, which would slam every <details> shut and
+// jump you back to the top mid-read. Persist what the reader opened and where
+// they were, keyed by run so two tabs do not fight. sessionStorage, not local:
+// this is view state, and it should die with the tab.
+(function preserveReadingState(){
+  const KEY = 'shipyard:' + (D.state?.runId || 'run');
+  let saved = {};
+  try { saved = JSON.parse(sessionStorage.getItem(KEY) || '{}') } catch {}
+
+  const summaries = () => [...document.querySelectorAll('details')];
+
+  summaries().forEach(d => {
+    const label = d.querySelector('summary')?.textContent?.trim();
+    if (label && saved.open && saved.open.includes(label)) d.open = true;
+    d.addEventListener('toggle', save);
+  });
+
+  if (typeof saved.scroll === 'number') window.scrollTo(0, saved.scroll);
+
+  function save(){
+    const open = summaries().filter(d => d.open)
+      .map(d => d.querySelector('summary')?.textContent?.trim())
+      .filter(Boolean);
+    try { sessionStorage.setItem(KEY, JSON.stringify({ open, scroll: window.scrollY })) } catch {}
+  }
+
+  let t;
+  window.addEventListener('scroll', () => { clearTimeout(t); t = setTimeout(save, 150) }, { passive: true });
+  window.addEventListener('beforeunload', save);
+})();
 </script>
 </body>
 </html>`

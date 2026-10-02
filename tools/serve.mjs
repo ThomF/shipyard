@@ -191,7 +191,17 @@ or see the demo yard with <code>npm run demo</code>.</div>`}
 </section>
 <div class="hazard"></div>
 <footer>${live.length ? 'YARD ACTIVE — reloading every 5s' : 'ALL BERTHS QUIET'} // 127.0.0.1:${PORT}</footer>
-</body></html>`
+<script>
+// The 5s reload would otherwise jump a reader back to the top of a long list.
+(function(){
+  const K='shipyard:yard';
+  try{const y=sessionStorage.getItem(K); if(y) window.scrollTo(0,+y)}catch{}
+  let t; addEventListener('scroll',()=>{clearTimeout(t);t=setTimeout(()=>{
+    try{sessionStorage.setItem(K,String(scrollY))}catch{}
+  },150)},{passive:true});
+  addEventListener('beforeunload',()=>{try{sessionStorage.setItem(K,String(scrollY))}catch{}});
+})();
+</script></body></html>`
 }
 
 createServer((req, res) => {
