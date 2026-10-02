@@ -151,11 +151,16 @@ so a later run knows what was already tried and what already failed.
 `SHIPYARD.md` and acts as the harbormaster. Runs on an ordinary Claude Code
 session — no separate API entitlements.
 
-**Standalone binary** (on the `core-runtime` branch, not merged). A TypeScript
-program that spawns its own agents via the Claude Agent SDK and runs unattended
-— you can close the laptop on an overnight job. Covers intake → survey → plan;
-the build/test/fix half is not implemented yet. Needs API access to the model
-named in the role files.
+**Standalone binary** (`src/`, not wired up yet). A TypeScript program that
+spawns its own agents via the Claude Agent SDK and runs unattended — you could
+close the laptop on an overnight job. It covers intake → survey → plan; the
+build/test/fix half is not implemented. It also needs API entitlement to the
+model named in the role files, which is why the session-driven path is the
+default.
+
+```bash
+npm install && npm test     # 83 tests
+```
 
 Both read the same `agents/*.md` files and produce the same artifacts.
 
