@@ -167,6 +167,36 @@ write tools — but they need `Bash` to run tests, and Bash can write files, so
 after a tester runs the harbormaster verifies the tree is clean and fails the
 run if it isn't.
 
+## The yard — one URL for every run
+
+```bash
+cd ~/Code/shipyard
+npm run yard
+```
+
+Opens a local control room at **http://localhost:7343** listing every Shipyard
+run across every repo under `~/Code`, newest first, with a status lamp per run
+and a link into each full report. It reloads itself every 5 seconds while
+anything is building.
+
+```bash
+npm run yard -- ~/work ~/Code    # watch several roots
+PORT=8080 npm run yard           # different port
+```
+
+Binds to `127.0.0.1` only — nothing leaves the machine, and it serves only run
+directories it actually found.
+
+Want to see it before you've run anything?
+
+```bash
+npm run demo && npm run yard -- .demo
+```
+
+That builds a throwaway yard with three runs — one shipped, one partial after
+burning all three cycles, one still building — so you can see what it looks
+like in each state.
+
 ## The report
 
 Every run produces a self-contained `report.html` — one file, data inlined, no

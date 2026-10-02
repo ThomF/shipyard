@@ -10,7 +10,10 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "install-command": "node tools/build-command.mjs",
-    "report": "node tools/render-report.mjs"
+    "report": "node tools/render-report.mjs",
+    "demo": "node tools/demo.mjs",
+    "index": "node tools/render-index.mjs",
+    "yard": "node tools/serve.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
