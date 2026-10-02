@@ -5,7 +5,7 @@
  AUTONOMOUS DEV YARD
 ```
 
-**Point it at a repo and a feature request. It plans, builds, tests, fixes, and hands you a report.**
+**Stand in a repo, name a feature. It plans, builds, tests, fixes, and hands you a report.**
 
 </div>
 
@@ -39,28 +39,62 @@ picks it up.
 
 That property is the whole design. Everything else follows from it.
 
-## Quick start
+## Install
+
+Once per machine:
 
 ```bash
-git clone <your-fork> shipyard && cd shipyard
+git clone git@github.com:ThomF/shipyard.git && cd shipyard
+npm run install-command
+```
+
+That bundles `SHIPYARD.md` and the six role files into a self-contained slash
+command at `~/.claude/commands/shipyard.md`, so `/shipyard` works from inside
+any repository.
+
+> **Re-run `npm run install-command` after editing `SHIPYARD.md` or any role
+> file.** The command is generated; the repo is the source of truth.
+
+## Quick start
+
+Stand in the repo you want the work done in, and pilot Shipyard into it:
+
+```bash
+cd ~/Code/some-project
 claude
 ```
 
-Then, in the session:
-
 ```
-/shipyard ../some-repo "add CSV export to the admin orders page"
+/shipyard add CSV export to the admin orders page
 ```
 
-Shipyard creates a branch in the **target** repo, works there, and writes the
-report there. It does not merge and does not push — the branch is yours to
-review.
+The target is simply the repo you are standing in — no paths to get wrong, and
+Shipyard cannot touch anything outside it because the session cannot see
+anything outside it.
 
-When it finishes, open the dashboard:
+The feature request can also be a **file** already in the repo, which is usually
+how a real user story arrives:
+
+```
+/shipyard docs/stories/CSV-EXPORT.md
+```
+
+Run it bare and it will look for likely sources of work and ask which one to
+build.
+
+Shipyard creates a branch in that repo, works there, and writes the report
+there. It does not merge and does not push — the branch is yours to review.
+
+When it finishes, render the dashboard from the Shipyard repo and open it:
 
 ```bash
-open ../some-repo/.shipyard/runs/<run-id>/report.html
+cd ~/Code/shipyard
+npm run report ~/Code/some-project/.shipyard/runs/<run-id>
+open ~/Code/some-project/.shipyard/runs/<run-id>/report.html
 ```
+
+(The renderer lives here rather than in your project, so it runs from a shell
+after the session finishes — Shipyard writes `report.md` either way.)
 
 > **First run:** point it at something small and real so you can watch the
 > delegation happen before trusting it with anything that matters.
@@ -169,10 +203,10 @@ Both read the same `agents/*.md` files and produce the same artifacts.
 ```
 SHIPYARD.md              the harbormaster's operating manual
 agents/*.md              role definitions — edit these to tune the team
-.claude/commands/        the /shipyard slash command
+tools/build-command.mjs  bundles the above into ~/.claude/commands/shipyard.md
 tools/render-report.mjs  run directory → self-contained report.html
 docs/superpowers/        design spec and implementation plan
-src/, tests/             the standalone binary (core-runtime branch)
+src/, tests/             the standalone binary (not wired up yet)
 ```
 
 ## Safety
