@@ -171,7 +171,7 @@ run if it isn't.
 
 ```bash
 cd ~/Code/shipyard
-npm run yard
+npm run dev          # or: npm run yard — same thing
 ```
 
 Opens a local control room at **http://localhost:7343** listing every Shipyard
