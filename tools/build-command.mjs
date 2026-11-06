@@ -12,15 +12,22 @@
 //
 //   node tools/build-command.mjs            install to ~/.claude/commands/
 //   node tools/build-command.mjs --print    write to stdout instead
+//
+// The report renderer is NOT inlined into the command. It is installed beside
+// it at ~/.claude/shipyard/render-report.mjs and copied into each target with
+// one `cp`. Inlining it meant the harbormaster had to re-type ~16 KB of
+// JavaScript verbatim at the start of every run: slow, token-expensive, and a
+// single transcription slip broke the live view.
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const manual = readFileSync(join(repo, 'SHIPYARD.md'), 'utf8').trim()
-const renderer = readFileSync(join(repo, 'tools', 'render-report.mjs'), 'utf8').trim()
+const RENDERER_SRC = join(repo, 'tools', 'render-report.mjs')
+const SHIPYARD_HOME = '~/.claude/shipyard'
 
 const roles = readdirSync(join(repo, 'agents'))
   .filter(f => f.endsWith('.md'))
@@ -67,11 +74,19 @@ whole cycle.
 
 ## The live yard view
 
-During preflight, write the renderer at the end of this file to
-\`.shipyard/render-report.mjs\` in this repo, verbatim. It is bundled here
-because the Shipyard repo is outside this session's reach.
+During preflight, install the renderer into this repo with one command. Do not
+write it by hand and do not read it; just copy it:
 
-Then, **after every stage transition and every agent you spawn or lose**, run:
+\`\`\`bash
+mkdir -p .shipyard && cp ${SHIPYARD_HOME}/render-report.mjs .shipyard/render-report.mjs
+\`\`\`
+
+If that file is missing, stop and tell the user to run
+\`npm run install-command\` in their Shipyard checkout. Do not improvise a
+renderer.
+
+Then, **after every stage transition and every agent you spawn, finish, or
+lose**, run:
 
 \`\`\`bash
 node .shipyard/render-report.mjs .shipyard/runs/<run-id>
@@ -79,14 +94,18 @@ node .shipyard/render-report.mjs .shipyard/runs/<run-id>
 
 It regenerates \`report.html\`. While the run is in flight that page reloads
 itself every 4 seconds, so the user keeps one tab open and watches the yard
-work — criteria flipping, tasks completing, agents dying and respawning. When
-the run ends it stops reloading on its own.
+work: criteria flipping, tasks completing, crew timers ticking, files changing
+in the working tree, agents dying and respawning. When the run ends it stops
+reloading on its own.
 
 Tell the user the path to \`report.html\` **as soon as it first exists**, not at
-the end — the point is watching it, not reading it afterwards.
+the end. Also mention that \`npm run yard\` in their Shipyard checkout gives a
+fully live view at http://localhost:7343 that re-renders on every refresh, so
+it shows files changing even while a dev is mid-task.
 
 Re-rendering is cheap and local. Do it liberally; a stale page is worse than a
-redundant render.
+redundant render. Rendering is a single \`node\` call: never read its output
+back into your context beyond the path it prints.
 
 ## Reporting back
 
@@ -103,21 +122,14 @@ ${manual}
 
 These are the role files referenced throughout the manual above, inlined. When
 the manual says "spawn an agent with \`agents/dev.md\`", use the **dev** section
-below as that subagent's instructions, and give it exactly the tools its
-frontmatter lists.
+below as that subagent's instructions, give it exactly the tools its
+frontmatter lists, and pass its frontmatter \`model\` (\`opus\` or \`sonnet\`)
+as the Agent tool's \`model\` parameter. The split is deliberate: roles that
+decide (intake, manager, dev, tester) run on opus; roles that read and
+summarise (surveyor, reporter) run on sonnet, which is much faster.
 
 ${roles.map(r => `## Role: ${r.name}\n\n\`\`\`markdown\n${r.body}\n\`\`\``).join('\n\n')}
 
----
-
-# THE RENDERER
-
-Write this to \`.shipyard/render-report.mjs\` in the target repo during preflight,
-exactly as written. Run it after every stage to refresh the live yard view.
-
-\`\`\`javascript
-${renderer}
-\`\`\`
 `
 
 if (process.argv.includes('--print')) {
@@ -130,7 +142,12 @@ mkdirSync(dir, { recursive: true })
 const out = join(dir, 'shipyard.md')
 writeFileSync(out, command)
 
+const home = join(homedir(), '.claude', 'shipyard')
+mkdirSync(home, { recursive: true })
+copyFileSync(RENDERER_SRC, join(home, 'render-report.mjs'))
+
 const kb = (command.length / 1024).toFixed(1)
 console.log(`installed ${out}`)
+console.log(`installed ${join(home, 'render-report.mjs')}`)
 console.log(`  ${roles.length} roles bundled: ${roles.map(r => r.name).join(', ')}`)
 console.log(`  ${kb} KB — /shipyard now works from inside any repo`)

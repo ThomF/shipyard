@@ -1,6 +1,6 @@
 ---
 name: dev
-model: claude-opus-4-8
+model: opus
 tools: [Read, Grep, Glob, Write, Edit, Bash]
 permissionMode: acceptEdits
 delegatesTo: []

@@ -8,7 +8,7 @@ describe('loadRole', () => {
   it('loads the shipped manager definition', async () => {
     const r = await loadRole('manager')
     expect(r.name).toBe('manager')
-    expect(r.model).toBe('claude-opus-4-8')
+    expect(r.model).toBe('opus')
     expect(r.delegatesTo).toContain('dev')
     expect(r.systemPrompt.length).toBeGreaterThan(0)
   })

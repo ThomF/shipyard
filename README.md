@@ -50,10 +50,13 @@ npm run install-command
 
 That bundles `SHIPYARD.md` and the six role files into a self-contained slash
 command at `~/.claude/commands/shipyard.md`, so `/shipyard` works from inside
-any repository.
+any repository, and installs the dashboard renderer beside it at
+`~/.claude/shipyard/render-report.mjs`. Each run copies the renderer in with one
+`cp` rather than having the harbormaster re-type it.
 
-> **Re-run `npm run install-command` after editing `SHIPYARD.md` or any role
-> file.** The command is generated; the repo is the source of truth.
+> **Re-run `npm run install-command` after editing `SHIPYARD.md`, any role
+> file, or the renderer.** The command is generated; the repo is the source of
+> truth.
 
 ## Quick start
 
@@ -94,8 +97,17 @@ run ends.
 open .shipyard/runs/<run-id>/report.html
 ```
 
-You see the stage pipeline advance, acceptance criteria flip to pass, tasks go
-from running to done, and any agent that dies and gets respawned.
+You see the stage pipeline advance with a timer on every stage, a run clock,
+the crew currently on deck with how long each agent has been working,
+acceptance criteria flip to pass, tasks go from running to done, every file the
+crew has touched (with a pulsing dot on the ones being written right now), and
+any agent that dies and gets respawned. If the harbormaster goes quiet for 20
+minutes the page raises **NO SIGNAL**, so a stalled run never looks like a busy
+one.
+
+For the most live view, run `npm run yard` in your Shipyard checkout and open
+the run from there. The yard re-renders on every refresh, so the working tree
+panel updates even while a single dev is mid-task.
 
 > **First run:** point it at something small and real so you can watch the
 > delegation happen before trusting it with anything that matters.
@@ -105,14 +117,11 @@ from running to done, and any agent that dies and gets respawned.
 ```
      feature request + target repo
                  │
-      ┌──────────▼──────────┐
-      │ INTAKE              │  turns the request into acceptance criteria
-      │                     │  specific enough to pass or fail without judgement
-      └──────────┬──────────┘
-      ┌──────────▼──────────┐
-      │ SURVEY   ×5 parallel│  structure · tests · conventions
-      │                     │  documentation · relevant modules
-      └──────────┬──────────┘     (skipped for an empty target)
+      ┌──────────▼──────────┐ ┌─────────────────────┐
+      │ INTAKE              │ │ SURVEY   ×1-3       │  run at the same time
+      │ acceptance criteria │ │ cached between runs │  (skipped for an empty
+      └──────────┬──────────┘ └──────────┬──────────┘   target)
+                 │◄──────────────────────┘
       ┌──────────▼──────────┐
       │ PLAN                │  task DAG + a spec page explaining the approach
       │                     │  two concurrent tasks may never own the same file
@@ -124,7 +133,7 @@ from running to done, and any agent that dies and gets respawned.
       │ TEST     tester     │  verdict per criterion, with real output as evidence
       └──────────┬──────────┘
             pass │ fail
-                 │   └──► TRIAGE ──► fix ──► re-test   ×3 rounds
+                 │   └──► TRIAGE ──► fix ──► re-test failing   ×3 rounds
                  │              └──► still failing? new manager, new cycle ×3
                  ▼
               REPORT
@@ -135,6 +144,27 @@ the same time must never claim the same file. Two tasks that share a file are
 fine when one depends on the other — they run in sequence. The plan is rejected
 and re-planned if it gets this wrong.
 
+## Built for speed
+
+A run is many agents in sequence, so Shipyard takes a fast path at every stage
+where it can do so without weakening a check. Each one taken is recorded in
+`state.json` and shown as a chip on the dashboard.
+
+| Fast path | What it skips |
+|---|---|
+| Model split | Surveyors and the reporter run on sonnet; roles that decide stay on opus |
+| Parallel intake | Survey starts alongside intake instead of after it |
+| `survey-cache` | The codebase map is cached in `.git/shipyard/` and reused when nothing structural changed; only the request-specific surveyor runs |
+| Sized survey | One surveyor for small repos, three for large ones, never five |
+| Rolling build | Each dev is dispatched the moment its dependencies finish, not in waves |
+| `scoped-retest` | Fix rounds re-verify only failing criteria, plus one full regression run |
+| `direct-fix` | A first-round defect with clear evidence goes straight to a dev without a manager |
+| `intake-from-story` | A story file that already has testable criteria becomes the brief directly |
+| Installed renderer | The dashboard renderer is copied in, not re-typed by the harbormaster |
+
+Stage timings are recorded too, and `PROJECT-REPORT.md` notes the slowest stage
+of every run, so you can see where the time actually goes.
+
 ## Roles are files, not code
 
 Every role is a markdown file in `agents/` with frontmatter and a system prompt:
@@ -142,7 +172,7 @@ Every role is a markdown file in `agents/` with frontmatter and a system prompt:
 ```markdown
 ---
 name: tester
-model: claude-opus-4-8
+model: opus
 tools: [Read, Grep, Glob, Bash]
 ---
 You are a tester. You verify acceptance criteria and report a verdict.
@@ -150,17 +180,17 @@ You do NOT fix anything...
 ```
 
 **Tuning the team is editing a prompt, not editing a program.** Want devs more
-conservative? Change `dev.md`. Want a different model? Change one line. No
-rebuild.
+conservative? Change `dev.md`. Want a different model? Change one line (`opus`,
+`sonnet`, or `haiku`). Then re-run `npm run install-command`.
 
-| Role | Writes code | Decides "done" |
-|---|---|---|
-| `manager.md` | no | yes — triages and assigns |
-| `dev.md` | **yes** | no |
-| `tester.md` | no | reports verdict only |
-| `surveyor.md` | no | no |
-| `intake.md` | no | no |
-| `reporter.md` | no | no |
+| Role | Model | Writes code | Decides "done" |
+|---|---|---|---|
+| `manager.md` | opus | no | yes — triages and assigns |
+| `dev.md` | opus | **yes** | no |
+| `tester.md` | opus | no | reports verdict only |
+| `intake.md` | opus | no | no |
+| `surveyor.md` | sonnet | no | no |
+| `reporter.md` | sonnet | no | no |
 
 Separation of duties is checked, not trusted. Testers are dispatched without
 write tools — but they need `Bash` to run tests, and Bash can write files, so
@@ -228,7 +258,7 @@ model named in the role files, which is why the session-driven path is the
 default.
 
 ```bash
-npm install && npm test     # 83 tests
+npm install && npm test     # 92 tests
 ```
 
 Both read the same `agents/*.md` files and produce the same artifacts.
@@ -246,7 +276,8 @@ src/, tests/             the standalone binary (not wired up yet)
 
 ## Safety
 
-- Writes are confined to the target repo and its `.shipyard/` directory
+- Writes are confined to the target repo: its working tree, its `.shipyard/`
+  directory, and the survey cache under `.git/shipyard/`
 - Nothing is deleted — failed cycles are archived as tags, never destroyed
 - Never force-pushes, resets hard, or drops database objects
 - The test command comes from the survey, not from an agent's invention, so no

@@ -15,6 +15,10 @@ rmSync(join(repo, '.demo'), { recursive: true, force: true })
 
 const w = (p, v) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, typeof v === 'string' ? v : JSON.stringify(v, null, 2)) }
 
+// Timestamps for the in-flight run are relative to now, so its clocks tick
+// from believable values instead of claiming it started weeks ago.
+const ago = (min) => new Date(Date.now() - min * 60000).toISOString()
+
 const RUNS = [
   {
     id: '2026-09-28T08-12-00',
@@ -23,6 +27,16 @@ const RUNS = [
       branch: 'shipyard/dark-mode-toggle-2026-09-28T08-12-00',
       criteria: { AC1: 'pass', AC2: 'pass', AC3: 'pass' },
       tasks: { T1: 'done', T2: 'done' }, deaths: [],
+      startedAt: '2026-09-28T08:12:00Z', endedAt: '2026-09-28T08:19:02Z',
+      stageTimes: {
+        intake: { start: '2026-09-28T08:12:00Z', end: '2026-09-28T08:12:48Z' },
+        survey: { start: '2026-09-28T08:12:00Z', end: '2026-09-28T08:12:48Z' },
+        plan: { start: '2026-09-28T08:12:48Z', end: '2026-09-28T08:13:30Z' },
+        build: { start: '2026-09-28T08:13:30Z', end: '2026-09-28T08:16:10Z' },
+        test: { start: '2026-09-28T08:16:10Z', end: '2026-09-28T08:18:40Z' },
+        report: { start: '2026-09-28T08:18:40Z', end: '2026-09-28T08:19:02Z' },
+      },
+      fastPaths: ['survey-cache'],
     },
     goal: 'Add a dark mode toggle that persists across reloads.',
     criteria: [
@@ -74,6 +88,15 @@ const RUNS = [
       criteria: { AC1: 'pass', AC2: 'untested', AC3: 'untested' },
       tasks: { T1: 'done', T2: 'running', T3: 'todo' },
       deaths: [{ agentId: 'dev-002', reason: 'timeout', detail: 'no output for 15m; respawned as dev-003' }],
+      startedAt: ago(14),
+      stageTimes: {
+        intake: { start: ago(14), end: ago(13) },
+        survey: { start: ago(14), end: ago(13) },
+        plan: { start: ago(13), end: ago(12) },
+        build: { start: ago(12) },
+      },
+      active: [{ id: 'dev-003', role: 'dev', task: 'T2 · Download hook (respawn of dev-002)', since: ago(4) }],
+      fastPaths: ['survey-cache'],
     },
     goal: 'Export the orders table to CSV, respecting the active filter.',
     criteria: [

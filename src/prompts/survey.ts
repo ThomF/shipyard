@@ -2,9 +2,9 @@ import type { Brief } from '../schemas/index.js'
 
 export function buildSurveyPrompt(args: { brief: Brief; concernPrompt: string }): string {
   return [
-    'You are surveying an existing repository. Cover ONLY the concern below.',
+    'You are surveying an existing repository. Cover ONLY the concern(s) below.',
     '',
-    'CONCERN',
+    'CONCERNS',
     args.concernPrompt,
     '',
     'THE WORK THIS SURVEY SUPPORTS',

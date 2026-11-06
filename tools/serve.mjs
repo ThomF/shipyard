@@ -84,7 +84,17 @@ function walk(dir, depth, out) {
   }
 }
 
+// The yard page and every open report tab hit the server every few seconds.
+// Walking every repo under the roots on each hit is wasted disk I/O, so a scan
+// is reused for a moment.
+let cached = { at: 0, runs: [] }
 function scan() {
+  if (Date.now() - cached.at < 2000) return cached.runs
+  cached = { at: Date.now(), runs: scanNow() }
+  return cached.runs
+}
+
+function scanNow() {
   const out = []
   for (const root of ROOTS) {
     if (!existsSync(root)) continue
@@ -132,6 +142,7 @@ background:var(--panel2);border-bottom:1px solid var(--rule);color:var(--amber-d
 .l-failed{background:var(--red);color:var(--red)}
 .l-partial{background:var(--amber);color:var(--amber)}
 .l-pending{background:var(--green);color:var(--green);animation:pulse 1.1s infinite}
+.l-stalled{background:var(--red);color:var(--red);animation:pulse 1.6s infinite}
 .goal{font-size:13px;color:#e8d5ad;margin:0 0 5px}
 .proj{color:var(--amber);letter-spacing:.16em;font-size:10px;text-transform:uppercase;margin-right:9px}
 .sub{font-size:11px;color:var(--grey);letter-spacing:.08em}
@@ -152,16 +163,26 @@ function page(runs) {
   const tally = runs.reduce((a, r) => { const v = r.state.verdict || 'pending'; a[v] = (a[v] || 0) + 1; return a }, {})
   const projects = new Set(runs.map(r => r.project))
 
+  const QUIET = 20 * 60 * 1000
+  const clock = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60)
+    return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`
+  }
   const berths = runs.map(r => {
     const v = r.state.verdict || 'pending'
+    const isLive = v === 'pending' && r.state.stage !== 'done'
+    const stalled = isLive && Date.now() - r.mtime > QUIET
+    const start = Date.parse(r.state.startedAt), end = Date.parse(r.state.endedAt)
+    const took = Number.isFinite(start) ? clock((Number.isFinite(end) ? end : Date.now()) - start) : null
+    const crew = Array.isArray(r.state.active) ? r.state.active.length : 0
     const pct = r.total ? r.pass / r.total * 100 : 0
     const fpct = r.total ? r.fail / r.total * 100 : 0
     const lost = (r.state.deaths || []).length
     return `<div class="berth">
-      <div class="lamp l-${esc(v)}"></div>
+      <div class="lamp l-${stalled ? 'stalled' : esc(v)}"></div>
       <div>
         <p class="goal"><span class="proj">${esc(r.project)}</span><a href="/r?d=${encodeURIComponent(r.dir)}">${esc(r.goal)}</a></p>
-        <div class="sub">${r.worktree ? `<span style="color:var(--amber-dim)">worktree ${esc(r.worktree)}</span> · ` : ''}${esc(r.id)} · cycle ${esc(r.state.cycle || '?')}/${esc(r.state.maxCycles || 3)} · stage ${esc(r.state.stage || '—')}${r.state.branch ? ' · ' + esc(r.state.branch) : ''}${lost ? ` · <span style="color:var(--red)">${lost} lost</span>` : ''}</div>
+        <div class="sub">${r.worktree ? `<span style="color:var(--amber-dim)">worktree ${esc(r.worktree)}</span> · ` : ''}${esc(r.id)} · cycle ${esc(r.state.cycle || '?')}/${esc(r.state.maxCycles || 3)} · stage ${esc(r.state.stage || '—')}${took ? ' · ' + took : ''}${isLive && crew ? ` · <span style="color:var(--green)">${crew} working</span>` : ''}${stalled ? ` · <span style="color:var(--red)">no signal ${clock(Date.now() - r.mtime)}</span>` : ''}${r.state.branch ? ' · ' + esc(r.state.branch) : ''}${lost ? ` · <span style="color:var(--red)">${lost} lost</span>` : ''}</div>
         ${r.total ? `<div class="mini"><i class="p" style="width:${pct}%"></i><i class="f" style="width:${fpct}%"></i><i class="u" style="width:${100 - pct - fpct}%"></i></div>` : ''}
       </div>
       <div class="right"><span class="score">${r.total ? r.pass + '/' + r.total : '—'}</span>

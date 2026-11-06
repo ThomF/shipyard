@@ -12,6 +12,19 @@ export const SURVEY_CONCERNS: readonly SurveyConcern[] = [
   { id: 'relevant', prompt: 'The modules the stated goal actually touches. Fill relevantModules.' },
 ]
 
+/**
+ * How concerns are grouped into surveyors. Five single-concern agents spent
+ * most of their time re-discovering the same layout; pairing concerns that
+ * read the same files (manifests for structure + tests, docs and lint config
+ * for conventions + documentation) halves the agent count with no loss of
+ * coverage. `relevant` stays alone because it is the only request-specific one.
+ */
+export const SURVEY_CREWS: readonly (readonly string[])[] = [
+  ['structure', 'tests'],
+  ['conventions', 'documentation'],
+  ['relevant'],
+]
+
 const IGNORED = new Set(['.git', '.shipyard', '.DS_Store'])
 
 export async function isEmptyTarget(target: string): Promise<boolean> {
@@ -22,13 +35,25 @@ export async function isEmptyTarget(target: string): Promise<boolean> {
 export type SurveyDeps = {
   brief: Brief
   spawn: (args: { concernId: string; concernPrompt: string }) => Promise<AgentOutcome<CodebaseMap>>
+  /** Concern ids grouped per surveyor. Defaults to SURVEY_CREWS. */
+  crews?: readonly (readonly string[])[]
+}
+
+/** Combine the concerns of one crew into a single surveyor brief. */
+export function crewPrompt(ids: readonly string[]): string {
+  return ids.map(id => {
+    const c = SURVEY_CONCERNS.find(x => x.id === id)
+    if (!c) throw new Error(`unknown survey concern: ${id}`)
+    return ids.length > 1 ? `[${c.id}] ${c.prompt}` : c.prompt
+  }).join('\n')
 }
 
 export type SurveyResult = { map: CodebaseMap; costUsd: number } | { dead: string }
 
 export async function runSurvey(deps: SurveyDeps): Promise<SurveyResult> {
+  const crews = deps.crews ?? SURVEY_CREWS
   const outcomes = await Promise.all(
-    SURVEY_CONCERNS.map(c => deps.spawn({ concernId: c.id, concernPrompt: c.prompt })),
+    crews.map(ids => deps.spawn({ concernId: ids.join('+'), concernPrompt: crewPrompt(ids) })),
   )
 
   const dead = outcomes.filter(o => o.status === 'dead')

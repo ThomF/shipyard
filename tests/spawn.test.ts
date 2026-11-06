@@ -8,7 +8,7 @@ import type { RoleDefinition } from '../src/agents/roles.js'
 
 const role: RoleDefinition = {
   name: 'tester',
-  model: 'claude-opus-4-8',
+  model: 'opus',
   tools: ['Read', 'Bash'],
   permissionMode: 'default',
   delegatesTo: [],
@@ -62,7 +62,7 @@ describe('spawnAgent', () => {
     await spawnAgent(opts as never)
     expect(seen.options.allowedTools).toEqual(['Read', 'Bash'])
     expect(seen.options.cwd).toBe(opts.cwd)
-    expect(seen.options.model).toBe('claude-opus-4-8')
+    expect(seen.options.model).toBe('opus')
     expect(seen.options.systemPrompt).toBe('You are a tester.')
     expect(seen.options.outputFormat.type).toBe('json_schema')
   })

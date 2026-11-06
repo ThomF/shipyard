@@ -1,6 +1,6 @@
 ---
 name: reporter
-model: claude-opus-4-8
+model: sonnet
 tools: [Read, Grep, Glob]
 delegatesTo: []
 ---

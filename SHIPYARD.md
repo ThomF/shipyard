@@ -31,6 +31,23 @@ explicitly in every dispatch.
 
 ---
 
+## The second rule: wall-clock time is the cost the user feels
+
+A run that takes an hour gets used less than one that takes twenty minutes.
+Every stage below has a fast path; take it whenever its conditions hold, and
+record in the ledger which fast path you took so the report can show it.
+
+- **Never wait on a whole batch when one result unblocks work.** Dispatch
+  agents in the background and react to each as it finishes.
+- **Never redo work whose inputs did not change.** The survey is cached across
+  runs; a passing criterion stays passing unless the regression run breaks.
+- **Use the model the role file names.** Surveyors and the reporter run on
+  sonnet because they read and summarise; do not upgrade them.
+- **Keep prompts small.** A dev gets its task, not the plan; a tester in a fix
+  round gets the criteria still failing, not all of them.
+
+---
+
 ## Roles
 
 Six role definitions live in `agents/`. Each is a system prompt with frontmatter
@@ -77,6 +94,10 @@ Only devs write code. The manager decides and never touches files.
 
    Tell the user which branch you created and that their working copy is now on
    it, so nothing about the switch is a surprise.
+
+   Record the commit you branched from (`git rev-parse HEAD`) as `baseCommit`
+   in `state.json`. The dashboard diffs against it to show which files the crew
+   has touched, live.
 3. Create `.shipyard/runs/<run-id>/` in the target repo. Everything below is
    written there, and it is committed with the work — the report is evidence
    about this branch and travels with it.
@@ -116,12 +137,29 @@ Only devs write code. The manager decides and never touches files.
   "fixRound": 0, "maxFixRounds": 3,
   "criteria": { "AC1": "pass|fail|untested" },
   "tasks": { "T1": "todo|running|done|blocked" },
-  "deaths": [], "verdict": "pending|shipped|partial|failed"
+  "deaths": [], "verdict": "pending|shipped|partial|failed",
+  "baseCommit": "", "startedAt": "<ISO time>", "endedAt": null,
+  "stageTimes": { "intake": { "start": "<ISO>", "end": "<ISO>" } },
+  "active": [ { "id": "dev-T1", "role": "dev", "task": "T1", "since": "<ISO>" } ],
+  "fastPaths": [ "survey-cache" ]
 }
 ```
 
 Write it after every stage transition. On resume, read it and continue from
 `stage` — never restart a stage whose artifact already exists.
+
+**Telemetry is part of the job, not decoration.** The user watches the run
+through these fields:
+
+- `stageTimes` — stamp `start` when you enter a stage and `end` when you leave
+  it. The fix stage may be entered several times; keep the first `start` and
+  update `end` each time.
+- `active` — add an entry when you dispatch an agent and remove it when the
+  agent returns or dies. This is what makes the dashboard show who is working
+  and for how long.
+- `endedAt` — stamp it when the verdict is final.
+
+Use real timestamps from `date -u +%Y-%m-%dT%H:%M:%SZ`, never invented ones.
 
 ---
 
@@ -137,6 +175,11 @@ Each criterion must be checkable by a tester without judgement. Reject the brief
 and re-dispatch if every criterion is unverifiable or if ids are duplicated — a
 vague contract makes every later stage meaningless.
 
+**Fast path: a story that already is a contract.** When the request is a file
+that already states a goal and numbered acceptance criteria that meet the bar
+above, write `brief.json` from it directly instead of spawning intake, and
+record `intake-from-story` in `fastPaths`. Add any assumptions you had to make.
+
 Write `brief.json`.
 
 ### 2. Survey
@@ -144,8 +187,30 @@ Write `brief.json`.
 Skip entirely if the target has no source files (ignore `.git`, `.shipyard`,
 `.DS_Store`).
 
-Otherwise spawn **five surveyors in parallel**, one per concern. Split by
-concern, not by directory, so cost does not scale with repository size:
+**Run the survey at the same time as intake.** The survey needs only the raw
+request, not the brief, so dispatch both together in the background. The
+`relevant` concern gets the request text as written.
+
+**Fast path: reuse the cached map.** A completed survey is cached at
+`$(git rev-parse --git-dir)/shipyard/codebase-map.json` with a top-level
+`"commit"` field. It lives under `.git` on purpose: that directory survives
+branch switches and is never committed, so the cache is there on the next run
+even though `.shipyard/` was committed to a different branch. Reuse it when all
+of these hold:
+
+- the cache exists and its `commit` is an ancestor of `HEAD`
+- `git diff --name-only <commit> HEAD` lists fewer than 30 files
+- none of those files is a manifest, lockfile, build config, test config, or
+  CI file (`package.json`, `*.lock`, `go.mod`, `pyproject.toml`, `Cargo.toml`,
+  `tsconfig*.json`, `vite*`/`vitest*`/`jest*`/`playwright*` configs,
+  `.github/`, `Makefile`, `Dockerfile`)
+
+When it holds, dispatch **only** the `relevant` surveyor (the one concern that
+depends on this request), merge its result into a copy of the cached map, and
+record `survey-cache` in `fastPaths`. This turns a five-agent stage into one.
+
+**Otherwise run a full survey.** Split by concern, not by directory, so cost
+does not scale with repository size. The concerns are:
 
 1. **structure** — layout, language, framework, build system
 2. **tests** — test runner and the exact command to run tests
@@ -153,12 +218,26 @@ concern, not by directory, so cost does not scale with repository size:
 4. **documentation** — README, `docs/`, CONTRIBUTING, architecture notes
 5. **relevant** — the modules this request actually touches
 
-The documentation surveyor matters more than it looks: a repo's docs state
+Size the crew to the repo. Count tracked source files with `git ls-files`:
+
+- **under 60 files**: one surveyor covers all five concerns
+- **otherwise**: three surveyors in parallel, `structure + tests`,
+  `conventions + documentation`, and `relevant`
+
+The documentation concern matters more than it looks: a repo's docs state
 intent the code cannot, which is what lets the plan fit the project rather than
 merely compile against it.
 
-Merge into `codebase-map.json`. If any surveyor dies, re-dispatch it — do not
-proceed on a partial map.
+Merge into `codebase-map.json` in the run directory, then copy it to
+`$(git rev-parse --git-dir)/shipyard/codebase-map.json` with `"commit"` set to
+the `baseCommit`, so the next run can reuse it. If any surveyor dies,
+re-dispatch it — do not proceed on a partial map.
+
+**Verify the test command before planning.** Run it once yourself (output to a
+file, not your context; you only need the exit code and the last few lines).
+If it does not run at all on the untouched branch, record that in the ledger
+and tell the planner, because every later test verdict depends on it. Note how
+long it took: it bounds how fast every fix round can be.
 
 ### 3. Plan
 
@@ -185,6 +264,11 @@ Walk the DAG. Dispatch devs for tasks whose dependencies are satisfied.
 **Run tasks in parallel only when their file ownership is disjoint** — the plan
 validation above guarantees this for unordered tasks, so concurrent dispatch is
 safe. Cap concurrency at 4.
+
+**Dispatch on a rolling basis, not in waves.** Launch devs as background agents
+and handle each one as it returns: mark its task done, re-render, and
+immediately dispatch any task that just became ready. Waiting for a whole wave
+to finish lets the slowest dev hold up work that was already unblocked.
 
 Each dev gets: its task, the acceptance criteria it serves, the files it owns,
 the codebase map, and nothing else. Not the full plan, not other devs' reports.
@@ -219,10 +303,24 @@ the check that makes separation of duties real rather than advisory.
 
 Write `test-report.json`. If every criterion passes, go to **Report**.
 
+**Fast path for re-tests.** In a fix round, the tester re-verifies only the
+criteria that are not yet `pass`, plus one run of the full test command as a
+regression guard. If the regression run is green, criteria that passed before
+stay `pass`. If it goes red, every criterion is back in scope for that round.
+Record `scoped-retest` in `fastPaths` when you take this path.
+
 ### 6. Triage and fix
 
 Spawn a manager with the failing criteria and the tester's evidence. It triages
 them into scoped fix tasks. Write `defects.json`.
+
+**Fast path: direct fix.** Skip the manager when all of these hold: this is the
+first fix round for these defects, every failing criterion traces to files
+owned by exactly one completed task, and the tester's evidence names the cause
+(an assertion, a stack trace, a missing export). Then write the fix task
+yourself from that task and the evidence, assign it the same files, and
+dispatch a dev. Record `direct-fix` in `fastPaths`. If the same criterion fails
+again, the next round goes through the manager.
 
 Dispatch devs on the fix tasks. Each fix task carries an `attempts` list
 summarising what previous rounds tried and why it failed, so the system does not
@@ -259,8 +357,8 @@ Then generate the dashboard:
 node <shipyard>/tools/render-report.mjs <target>/.shipyard/runs/<run-id>
 ```
 
-Append one entry to `.shipyard/PROJECT-REPORT.md`. Commit everything to the
-branch. Tell the user the branch name and the path to `report.html`.
+Append one entry to `.shipyard/PROJECT-REPORT.md`, including the run's total
+wall-clock time and the slowest stage. Commit everything to the branch. Tell the user the branch name and the path to `report.html`.
 
 **Do not merge, do not push.** The branch is for them to review.
 
@@ -299,7 +397,8 @@ Hold devs to these. They apply to all code Shipyard produces.
 
 ## Safety
 
-- Writes are confined to the target repo and its `.shipyard/` directory
+- Writes are confined to the target repo, its `.shipyard/` directory, and the
+  survey cache under its `.git/shipyard/`
 - Nothing is deleted; failed work is archived
 - Never force-push, reset hard, or drop database objects
 - The test command comes from the codebase map, not from an agent's invention —

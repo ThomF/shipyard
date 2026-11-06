@@ -73,7 +73,7 @@ export async function loadRole(role: Role, dir = defaultAgentsDir()): Promise<Ro
   const mode = fields.permissionMode === 'acceptEdits' ? 'acceptEdits' : 'default'
   return {
     name: role,
-    model: fields.model || 'claude-opus-4-8',
+    model: fields.model || 'opus',
     tools: declared.length > 0 ? declared : [...floor],
     permissionMode: canWriteFiles(role) ? mode : 'default',
     delegatesTo: parseList(fields.delegatesTo) as Role[],

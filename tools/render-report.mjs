@@ -4,7 +4,8 @@
 //
 //   node tools/render-report.mjs <target>/.shipyard/runs/<run-id>
 
-import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync, existsSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join, basename } from 'node:path'
 
 const runDir = process.argv[2]
@@ -57,7 +58,44 @@ const agents = listFiles(join(runDir, 'agents'))
 const STAGES = ['intake', 'survey', 'plan', 'build', 'test', 'fix', 'report', 'done']
 const live = Boolean(state.stage) && state.stage !== 'done' && (state.verdict ?? 'pending') === 'pending'
 
-const data = { state, brief, map, ledger, reportMd, cycles, agents, runDir, live, stages: STAGES }
+let stateMtime = 0
+try { stateMtime = statSync(join(runDir, 'state.json')).mtimeMs } catch {}
+
+/**
+ * What the crew has touched so far, straight from git: everything changed
+ * since the commit the run branched from, committed or not, plus new files.
+ * Uncommitted paths are flagged so the page can show which files a dev is in
+ * the middle of writing. Read-only git calls; any failure just hides the panel.
+ */
+function workingTree(base) {
+  if (!base || !/^[0-9a-f]{7,40}$/i.test(base)) return null
+  const git = (...args) => execFileSync('git', ['-C', runDir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
+  try {
+    const files = new Map()
+    for (const line of git('diff', '--numstat', base, '--').split('\n')) {
+      const m = line.match(/^(\S+)\t(\S+)\t(.+)$/)
+      if (m) files.set(m[3], { path: m[3], add: m[1] === '-' ? null : +m[1], del: m[2] === '-' ? null : +m[2], wip: false })
+    }
+    const pending = new Set()
+    for (const line of git('status', '--porcelain', '--untracked-files=all').split('\n')) {
+      if (!line.trim()) continue
+      const path = line.slice(3).replace(/^.* -> /, '').replace(/^"|"$/g, '')
+      pending.add(path)
+      if (!files.has(path)) files.set(path, { path, add: null, del: null, wip: true, isNew: line.startsWith('??') })
+    }
+    for (const f of files.values()) if (pending.has(f.path)) f.wip = true
+    const list = [...files.values()]
+      .filter(f => !f.path.startsWith('.shipyard/'))
+      .sort((a, b) => Number(b.wip) - Number(a.wip) || a.path.localeCompare(b.path))
+    return { files: list.slice(0, 200), total: list.length }
+  } catch {
+    return null
+  }
+}
+
+const tree = workingTree(state.baseCommit)
+
+const data = { state, brief, map, ledger, reportMd, cycles, agents, runDir, live, stages: STAGES, tree, stateMtime, renderedAt: Date.now() }
 
 // </script> inside inlined JSON would close the tag early.
 const payload = JSON.stringify(data).replace(/</g, '\\u003c')
@@ -153,6 +191,19 @@ header{animation:flicker 7s infinite}
 .pipe div.done{color:var(--amber-dim);background:#140f09}
 .pipe div.now{color:#0b0a08;background:var(--amber);font-weight:700;animation:pulse 1.6s infinite}
 .tele{display:flex;justify-content:space-between;font-size:10px;letter-spacing:.2em;color:var(--grey);margin-top:6px}
+.pipe div small{display:block;font-size:9px;letter-spacing:.08em;margin-top:2px;opacity:.85}
+.nosignal{border-color:var(--red)!important;color:var(--red)!important;animation:pulse 1.6s infinite}
+.fast{border-color:var(--green);color:var(--green)}
+.crew{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.hand{border:1px solid var(--green);background:var(--panel2);padding:9px 11px}
+.hand .role{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--green)}
+.hand .role .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:6px;animation:pulse 1.1s infinite}
+.hand .who{font-weight:700;margin:4px 0 2px}
+.hand .clock{float:right;color:#e8d5ad}
+.hand.slow{border-color:var(--amber)}
+td.num{text-align:right;white-space:nowrap}
+.add{color:var(--green)} .del{color:var(--red)}
+.wip{color:var(--green);animation:pulse 1.1s infinite}
 </style>
 </head>
 <body>
@@ -177,10 +228,28 @@ const total = keys.length || 1;
 const parts = [];
 
 const nowIdx = D.stages.indexOf(st.stage);
+const T = s => { const t = Date.parse(s); return Number.isFinite(t) ? t : null; };
+const dur = ms => {
+  if (ms == null || ms < 0) return '';
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return h ? \`\${h}h\${String(m).padStart(2, '0')}m\` : m ? \`\${m}m\${String(r).padStart(2, '0')}s\` : \`\${r}s\`;
+};
+// Elements carrying data-since tick every second, so the page looks alive
+// between renders even while one long agent is working.
+const since = (iso, end) => {
+  const a = T(iso); if (a == null) return '—';
+  const b = T(end);
+  return b != null ? dur(b - a) : \`<span data-since="\${a}">\${dur(Date.now() - a)}</span>\`;
+};
+const times = st.stageTimes || {};
 const pipeline = D.stages.filter(s => s !== 'done').map((s, i) => {
   const cls = D.live && i === nowIdx ? 'now' : (nowIdx > i || !D.live ? 'done' : '');
-  return \`<div class="\${cls}">\${s.toUpperCase()}</div>\`;
+  const t = times[s];
+  const clock = t?.start ? \`<small>\${since(t.start, (D.live && i === nowIdx) ? null : (t.end || null))}</small>\` : '';
+  return \`<div class="\${cls}">\${s.toUpperCase()}\${clock}</div>\`;
 }).join('');
+const quietMs = D.stateMtime ? Date.now() - D.stateMtime : 0;
+const active = Array.isArray(st.active) ? st.active : [];
 
 parts.push(\`
 <header>
@@ -190,10 +259,14 @@ parts.push(\`
       ? '<span class="chip verdict live"><span class="dot"></span>WORKING</span>'
       : \`<span class="chip verdict v-\${esc(verdict)}">\${esc(verdict)}</span>\`}
     <span class="chip">RUN <b>\${esc(st.runId || '—')}</b></span>
+    \${st.startedAt ? \`<span class="chip">ELAPSED <b>\${since(st.startedAt, D.live ? null : st.endedAt)}</b></span>\` : ''}
+    \${D.live && active.length ? \`<span class="chip live">CREW <b>\${active.length}</b></span>\` : ''}
+    \${D.live ? \`<span class="chip nosignal" id="nosignal" data-mtime="\${D.stateMtime}" style="display:none">NO SIGNAL <b></b></span>\` : ''}
     <span class="chip">CYCLE <b>\${esc(st.cycle || '?')}/\${esc(st.maxCycles || 3)}</b></span>
     \${st.fixRound ? \`<span class="chip">FIX ROUND <b>\${esc(st.fixRound)}/\${esc(st.maxFixRounds || 3)}</b></span>\` : ''}
     <span class="chip">BRANCH <b>\${esc(st.branch || '—')}</b></span>
     <span class="chip">TARGET <b>\${esc(st.target || '—')}</b></span>
+    \${(st.fastPaths || []).map(f => \`<span class="chip fast">FAST PATH <b>\${esc(f)}</b></span>\`).join('')}
   </div>
   <div class="pipe">\${pipeline}</div>
   <div class="tele">
@@ -203,6 +276,30 @@ parts.push(\`
 </header>
 \${D.live ? '<div class="scan"><i></i></div>' : ''}
 <div class="hazard"></div>\`);
+
+if (D.live && active.length) {
+  parts.push(\`<section><h2>Crew on deck — \${active.length} working</h2><div class="body"><div class="crew">
+    \${active.map(a => {
+      const t = T(a.since);
+      const slow = t != null && Date.now() - t > 15 * 60 * 1000;
+      return \`<div class="hand\${slow ? ' slow' : ''}"><div class="role"><span class="dot"></span>\${esc(a.role || 'agent')}<span class="clock">\${since(a.since)}</span></div>
+        <div class="who">\${esc(a.id || '?')}</div>
+        \${a.task ? \`<div class="sub" style="color:var(--grey);font-size:11px">\${esc(a.task)}</div>\` : ''}</div>\`;
+    }).join('')}
+  </div></div></section>\`);
+}
+
+if (D.tree && D.tree.total) {
+  const wip = D.tree.files.filter(f => f.wip).length;
+  const rows = D.tree.files.map(f => \`<tr>
+      <td class="mono">\${f.wip ? '<span class="wip">●</span> ' : ''}\${esc(f.path)}</td>
+      <td class="num">\${f.add == null ? (f.isNew ? '<span class="add">new</span>' : '') : f.add ? '<span class="add">+' + f.add + '</span>' : ''}</td>
+      <td class="num">\${f.del ? '<span class="del">−' + f.del + '</span>' : ''}</td></tr>\`).join('');
+  parts.push(\`<section><h2>Working tree — \${D.tree.total} file\${D.tree.total === 1 ? '' : 's'} changed\${wip ? ', ' + wip + ' uncommitted' : ''}</h2><div class="body">
+    <table><thead><tr><th>File \${wip ? '(● = being written)' : ''}</th><th style="text-align:right">Added</th><th style="text-align:right">Removed</th></tr></thead><tbody>\${rows}</tbody></table>
+    \${D.tree.total > D.tree.files.length ? '<p class="empty">Showing the first ' + D.tree.files.length + '.</p>' : ''}
+  </div></section>\`);
+}
 
 if (st.request || D.brief?.goal) {
   parts.push(\`<section><h2>Work order</h2><div class="body">
@@ -274,6 +371,26 @@ parts.push(\`<div class="hazard"></div><footer>
     : 'TRANSMISSION ENDED — this page is final and will not reload.'}
 </footer>\`);
 document.getElementById('app').innerHTML = parts.join('');
+
+// Tick the clocks between reloads, and raise NO SIGNAL if the harbormaster
+// has not written state.json for a long time while the run claims to be live.
+(function tick(){
+  const fmt = ms => {
+    const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+    return h ? h + 'h' + String(m).padStart(2, '0') + 'm' : m ? m + 'm' + String(r).padStart(2, '0') + 's' : r + 's';
+  };
+  const QUIET = 20 * 60 * 1000;
+  function step(){
+    document.querySelectorAll('[data-since]').forEach(n => { n.textContent = fmt(Date.now() - +n.dataset.since); });
+    const ns = document.getElementById('nosignal');
+    if (ns && +ns.dataset.mtime) {
+      const q = Date.now() - +ns.dataset.mtime;
+      ns.style.display = q > QUIET ? '' : 'none';
+      ns.querySelector('b').textContent = fmt(q);
+    }
+  }
+  step(); setInterval(step, 1000);
+})();
 
 // A meta-refresh is a full reload, which would slam every <details> shut and
 // jump you back to the top mid-read. Persist what the reader opened and where

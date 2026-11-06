@@ -1,6 +1,6 @@
 ---
 name: intake
-model: claude-opus-4-8
+model: opus
 tools: [Read, Grep, Glob]
 delegatesTo: []
 ---
