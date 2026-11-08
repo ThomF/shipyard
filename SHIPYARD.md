@@ -118,6 +118,8 @@ Only devs write code. The manager decides and never touches files.
     codebase-map.json        survey output (skipped for empty targets)
     report.html              the dashboard — generated, committed
     report.md                plain-text report
+    report-notes.json        plan changes and doubts — yours to keep up to date
+    shipyard-report.json     the contract Harbor Pilot reads — generated, committed
     cycles/<n>/
       spec.md                the manager's written intent for this cycle
       plan.json              task DAG
@@ -126,6 +128,24 @@ Only devs write code. The manager decides and never touches files.
       defects.json           triaged defects
     agents/<agent-id>.md     full subagent reports — write-only
 ```
+
+`report-notes.json` holds the two things no other artifact records. Create it in
+preflight and add to it as they happen, not from memory at the end:
+
+```json
+{
+  "plan_changes": [ { "change": "", "why": "" } ],
+  "notes": [ "" ]
+}
+```
+
+- `plan_changes` — anything that made the build differ from the original request
+  or plan: a survey finding that reshaped the work, a manager re-plan, a cycle
+  restart, a criterion dropped or added.
+- `notes` — anything an agent said it was unsure about, or a shortcut it took.
+  Copy these from what devs and testers return to you.
+
+Empty arrays are a valid answer. A missing file is not.
 
 `state.json` shape:
 
@@ -357,8 +377,18 @@ Then generate the dashboard:
 node <shipyard>/tools/render-report.mjs <target>/.shipyard/runs/<run-id>
 ```
 
+Then write the report Harbor Pilot reads. Do this after the last code commit,
+because it records what changed on the branch:
+
+```
+node <shipyard>/tools/write-shipyard-report.mjs <target>/.shipyard/runs/<run-id>
+```
+
+If it stops because `report-notes.json` is missing, write that file honestly and
+run it again. Do not hand-write `shipyard-report.json`.
+
 Append one entry to `.shipyard/PROJECT-REPORT.md`, including the run's total
-wall-clock time and the slowest stage. Commit everything to the branch. Tell the user the branch name and the path to `report.html`.
+wall-clock time and the slowest stage. Commit everything to the branch. Tell the user the branch name and the path to `report.html`, and that running `/harbor` on this branch lays the code out for review.
 
 **Do not merge, do not push.** The branch is for them to review.
 

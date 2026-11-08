@@ -8,10 +8,12 @@
 // has to live inside the command itself.
 //
 // SHIPYARD.md stays the single source of truth. Re-run this after editing it or
-// any role file.
+// any role file. It builds /harbor from HARBOR.md the same way, for reading a
+// build afterwards.
 //
-//   node tools/build-command.mjs            install to ~/.claude/commands/
-//   node tools/build-command.mjs --print    write to stdout instead
+//   node tools/build-command.mjs                  install to ~/.claude/commands/
+//   node tools/build-command.mjs --print          write /shipyard to stdout instead
+//   node tools/build-command.mjs --print-harbor   write /harbor to stdout instead
 //
 // The report renderer is NOT inlined into the command. It is installed beside
 // it at ~/.claude/shipyard/render-report.mjs and copied into each target with
@@ -26,6 +28,7 @@ import { homedir } from 'node:os'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const manual = readFileSync(join(repo, 'SHIPYARD.md'), 'utf8').trim()
+const harborManual = readFileSync(join(repo, 'HARBOR.md'), 'utf8').trim()
 const RENDERER_SRC = join(repo, 'tools', 'render-report.mjs')
 const SHIPYARD_HOME = '~/.claude/shipyard'
 
@@ -107,10 +110,22 @@ Re-rendering is cheap and local. Do it liberally; a stale page is worse than a
 redundant render. Rendering is a single \`node\` call: never read its output
 back into your context beyond the path it prints.
 
+## The Harbor Pilot report
+
+During preflight, install the report writer the same way:
+
+\`\`\`bash
+cp ${SHIPYARD_HOME}/write-shipyard-report.mjs .shipyard/write-shipyard-report.mjs
+\`\`\`
+
+Wherever the manual says to run \`<shipyard>/tools/write-shipyard-report.mjs\`, run
+\`node .shipyard/write-shipyard-report.mjs .shipyard/runs/<run-id>\`.
+
 ## Reporting back
 
 When finished, tell the user: the branch name, the verdict, how many cycles it
-took, and the path to \`report.html\`. Then stop.
+took, the path to \`report.html\`, and that running \`/harbor\` on this branch lays
+the code out for review. Then stop.
 
 ---
 
@@ -132,8 +147,56 @@ ${roles.map(r => `## Role: ${r.name}\n\n\`\`\`markdown\n${r.body}\n\`\`\``).join
 
 `
 
+const HARBOR = `${SHIPYARD_HOME}/harbor.mjs`
+const harborCommand = `---
+description: Lay a Shipyard build out so you can read it start to finish, then ask about any step
+argument-hint: [ask "<question>" | verify] [--run <id>] [--force]
+allowed-tools: Read, Write, Bash(node ${HARBOR}:*)
+---
+
+# Harbor Pilot
+
+Everything you need is in this file; do not try to read \`HARBOR.md\` from disk.
+
+## This invocation
+
+**The repo is the current working directory**, on the branch of the build.
+
+**The arguments are:** \`$ARGUMENTS\`
+
+- **Starts with \`ask\`** — the rest is the question. Follow *Answering a question*.
+- **Starts with \`verify\`** — run \`node ${HARBOR} verify\` and report what it says.
+- **Anything else** — follow *Building the guide*.
+
+Pass any \`--run <id>\` on to every script call. Pass \`--force\` on to \`prepare\`.
+
+If \`${HARBOR}\` is missing, stop and tell the user to run \`npm run install-command\`
+in their Shipyard checkout.
+
+## The script
+
+Call it exactly like this, and do not read its source:
+
+\`\`\`bash
+node ${HARBOR} prepare
+node ${HARBOR} render
+node ${HARBOR} ask-append
+node ${HARBOR} ask-prepare <<'HARBOR_QUESTION'
+the question, word for word
+HARBOR_QUESTION
+\`\`\`
+
+---
+
+${harborManual}
+`
+
 if (process.argv.includes('--print')) {
   process.stdout.write(command)
+  process.exit(0)
+}
+if (process.argv.includes('--print-harbor')) {
+  process.stdout.write(harborCommand)
   process.exit(0)
 }
 
@@ -141,13 +204,20 @@ const dir = join(homedir(), '.claude', 'commands')
 mkdirSync(dir, { recursive: true })
 const out = join(dir, 'shipyard.md')
 writeFileSync(out, command)
+const harborOut = join(dir, 'harbor.md')
+writeFileSync(harborOut, harborCommand)
 
 const home = join(homedir(), '.claude', 'shipyard')
 mkdirSync(home, { recursive: true })
 copyFileSync(RENDERER_SRC, join(home, 'render-report.mjs'))
+copyFileSync(join(repo, 'tools', 'write-shipyard-report.mjs'), join(home, 'write-shipyard-report.mjs'))
+copyFileSync(join(repo, 'tools', 'harbor.mjs'), join(home, 'harbor.mjs'))
 
 const kb = (command.length / 1024).toFixed(1)
 console.log(`installed ${out}`)
+console.log(`installed ${harborOut}`)
 console.log(`installed ${join(home, 'render-report.mjs')}`)
+console.log(`installed ${join(home, 'write-shipyard-report.mjs')}`)
+console.log(`installed ${join(home, 'harbor.mjs')}`)
 console.log(`  ${roles.length} roles bundled: ${roles.map(r => r.name).join(', ')}`)
-console.log(`  ${kb} KB — /shipyard now works from inside any repo`)
+console.log(`  ${kb} KB — /shipyard and /harbor now work from inside any repo`)

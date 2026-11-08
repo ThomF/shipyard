@@ -54,8 +54,8 @@ any repository, and installs the dashboard renderer beside it at
 `~/.claude/shipyard/render-report.mjs`. Each run copies the renderer in with one
 `cp` rather than having the harbormaster re-type it.
 
-> **Re-run `npm run install-command` after editing `SHIPYARD.md`, any role
-> file, or the renderer.** The command is generated; the repo is the source of
+> **Re-run `npm run install-command` after editing `SHIPYARD.md`, `HARBOR.md`, any
+> role file, or a script in `tools/`.** The command is generated; the repo is the source of
 > truth.
 
 ## Quick start
@@ -244,6 +244,38 @@ any agents that died, and the harbormaster's log.
 `.shipyard/PROJECT-REPORT.md` accumulates one entry per run against that target,
 so a later run knows what was already tried and what already failed.
 
+## Harbor Pilot: reading what it built
+
+`/harbor` takes the many files a build wrote and lays the real code out so you can
+follow it from start to finish, in the order the data moves. It is not a reviewer. It
+doesn't approve, fix, or score anything. You are the reviewer.
+
+It works like `/shipyard`: `npm run install-command` installs both, and it runs on an
+ordinary Claude Code session. After a build, on the build's branch:
+
+```
+/harbor
+/harbor ask "S3: why does this return 200 when the query fails?"
+/harbor verify
+```
+
+`/harbor` writes `.shipyard/runs/<run-id>/REVIEW_GUIDE.md`. `/harbor ask` answers with
+quoted lines and adds the question and answer to the guide's Q&A log. `/harbor verify`
+re-checks every snippet in the guide against the branch.
+
+- **The code can't be paraphrased.** Claude only cites line ranges. `tools/harbor.mjs`
+  copies those lines from the commit, and refuses citations that don't exist.
+- **It reads what the script hands it.** The manual tells the session to stick to the
+  report, the diff, and the changed files. That is an instruction, not a sandbox: a
+  session has tools. The snippet check holds either way.
+- **It reads a report, not your repo's history.** Each build writes
+  `.shipyard/runs/<run-id>/shipyard-report.json`. Harbor Pilot uses the newest one for
+  your branch, or the one you name with `--run <id>`, and stops if it is missing or
+  malformed. `.shipyard/` is left out of the diff.
+- **The guide stays out of your branch.** It is listed in `.git/info/exclude`, so it
+  isn't committed and doesn't block the next build's clean-tree check. Rebuilding needs
+  `--force`, which keeps the old guide beside the new one.
+
 ## Two ways to run it
 
 **Session-driven** (default, what `/shipyard` uses). Claude Code reads
@@ -258,7 +290,7 @@ model named in the role files, which is why the session-driven path is the
 default.
 
 ```bash
-npm install && npm test     # 92 tests
+npm install && npm test
 ```
 
 Both read the same `agents/*.md` files and produce the same artifacts.
@@ -270,6 +302,9 @@ SHIPYARD.md              the harbormaster's operating manual
 agents/*.md              role definitions — edit these to tune the team
 tools/build-command.mjs  bundles the above into ~/.claude/commands/shipyard.md
 tools/render-report.mjs  run directory → self-contained report.html
+tools/write-shipyard-report.mjs  run directory → the report Harbor Pilot reads
+HARBOR.md                Harbor Pilot's manual, bundled into ~/.claude/commands/harbor.md
+tools/harbor.mjs         Harbor Pilot's plain-code half: context, snippets, checks
 docs/superpowers/        design spec and implementation plan
 src/, tests/             the standalone binary (not wired up yet)
 ```
