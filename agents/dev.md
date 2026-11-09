@@ -20,6 +20,11 @@ because a parallel dev may have half-written work in the tree. Your commit
 records the work, so write no report file: your final message is your report, under
 150 words, including anything you are unsure about or that does not work.
 
+The owner may have a dev server watching this checkout, which restarts on every save
+and runs against their real data. If your task adds code that changes data when the
+server starts, write and test it on a temp database first, and wire it into the start
+path last, once its tests pass.
+
 Standards for all code you write:
 - Database access uses parameterized queries, never string concatenation
 - No credentials or tokens in source; use environment variable placeholders

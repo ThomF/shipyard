@@ -340,11 +340,11 @@ Merge into `codebase-map.json` in the run directory, then copy it to
 the `baseCommit`, so the next run can reuse it. If any surveyor dies,
 re-dispatch it — do not proceed on a partial map.
 
-**Verify the test command before planning.** Run it once yourself (output to a
-file, not your context; you only need the exit code and the last few lines).
-If it does not run at all on the untouched branch, record that in the ledger
-and tell the planner, because every later test verdict depends on it. Note how
-long it took: it bounds how fast every fix round can be.
+**Verify the test command before planning.** Run it once yourself, with output to a
+file, and go by the exit code: the last lines may show one workspace of several, so
+never quote a test count. If it does not run at all on the untouched branch, record
+that in the ledger and tell the planner, because every later test verdict depends
+on it. Note how long it took.
 
 ### 3. Plan
 
@@ -364,8 +364,8 @@ node <shipyard>/tools/run-check.mjs plan <run-dir>
 ```
 
 It checks the task cap, that every criterion is served, that ids and dependencies
-are sound, and that **no two tasks that can run concurrently own the same file**
-(tasks ordered by the dependency graph may share one). If it rejects the plan,
+are sound, that no task owns `.shipyard/`, and that **no two concurrent tasks own
+the same file** (ordered tasks may share one). If it rejects the plan,
 re-prompt with its message, up to 3 attempts.
 
 ### 4. Build

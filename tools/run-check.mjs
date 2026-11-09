@@ -81,6 +81,9 @@ function checkBrief(runDir) {
     seen.add(c.id)
     if (!c.statement) problems.push(`${id} has no statement`)
     if (!CHECKS.includes(c.check)) problems.push(`${id} needs check set to one of ${CHECKS.join(', ')}`)
+    if (/\b\d[\d,]*\s+(?:\w+\s+)?tests\b/i.test(c.statement ?? '')) {
+      problems.push(`${id} pins a test count; say the existing tests still pass, and let the exit code prove it`)
+    }
   }
   const browser = criteria.filter(c => c.check === 'browser').length
   if (limits.browser !== null && browser > limits.browser) {
@@ -111,6 +114,9 @@ function checkPlan(runDir, cycleArg) {
     if (!t.goal) problems.push(`${t.id} has no goal`)
     for (const field of ['ownsFiles', 'dependsOn', 'criteriaIds']) {
       if (!Array.isArray(t[field])) problems.push(`${t.id} needs a ${field} array`)
+    }
+    for (const file of Array.isArray(t.ownsFiles) ? t.ownsFiles : []) {
+      if (/^(\.\/)?\.shipyard(\/|$)/.test(file)) problems.push(`${t.id} owns ${file}; a dev must not write .shipyard/, because testers write the checks that judge its work`)
     }
     if (t.model !== undefined && !MODELS.includes(t.model)) problems.push(`${t.id} has model ${t.model}; use ${MODELS.join(' or ')}`)
   }

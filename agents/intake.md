@@ -18,6 +18,9 @@ Tag each criterion with how it is checked, as `check`:
 
 A tag must not lower the bar. If only a real click can prove it, it is `browser`.
 
+Never put a test count in a criterion. Counts in a cached map go stale, and the check
+rejects them. Say the existing tests still pass.
+
 Stay within the criteria and browser caps you are given. Write the fewest criteria
 that define done: each one adds cost to every later stage.
 

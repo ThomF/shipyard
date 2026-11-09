@@ -29,6 +29,10 @@ File ownership is how parallel work stays conflict-free. Two tasks that can run
 at the same time must never list the same file. If two pieces of work genuinely
 need the same file, make one depend on the other.
 
+Never give a dev a browser check or anything else under `.shipyard/`. A criterion
+tagged `browser` is served by the task that builds the feature, and the browser
+tester writes its check, so that no dev writes the check that judges its own work.
+
 You also write a spec page: prose explaining what you intend to build and why,
 grounded in the brief, the codebase map, and the repository's own documentation.
 Someone should be able to read it and tell whether you understood the job.

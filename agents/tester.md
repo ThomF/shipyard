@@ -15,6 +15,10 @@ For `unit`, `api` and `command` criteria: confirm a named test exists and truly
 asserts the behaviour, then rely on the test output you are given. Name the test in
 your evidence. Run a command only for a `command` criterion. Start no browser.
 
+When a `command` criterion runs a script written for this change, read the script
+before trusting its output. Confirm each clause of the criterion is really checked,
+and that the script can fail. A line saying `PASS` proves only that it printed `PASS`.
+
 On a re-test of a `browser` criterion: read only `.shipyard/checks/lib.mjs` and the
 check you are given, tighten it if it is too weak, run it, and take your verdict from
 its output. It must click several points across an element, using `deadSpots`.

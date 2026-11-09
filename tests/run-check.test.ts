@@ -56,6 +56,16 @@ describe('run-check brief', () => {
     expect(r.err).toContain(`cap of ${cap}`)
   })
 
+  it.each(['Every test in the baseline (717 tests) still passes', 'All 1,204 existing tests pass', 'the 3 new tests pass'])('rejects a test count: %s', async (statement) => {
+    const r = check('brief', await runDir('standard', [{ id: 'AC1', statement, check: 'command' }]))
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('AC1 pins a test count')
+  })
+
+  it.each(['The existing tests still pass', 'Two tests prove the rule', 'Returns 3 latest albums', 'Top 10 test results show'])('allows: %s', async (statement) => {
+    expect(check('brief', await runDir('standard', [{ id: 'AC1', statement, check: 'command' }])).code).toBe(0)
+  })
+
   it('needs a size in state.json', async () => {
     const r = check('brief', await runDir(undefined, many(1)))
     expect(r.code).toBe(1)
@@ -104,6 +114,16 @@ describe('run-check plan', () => {
     const r = check('plan', await runDir('standard', many(1), legacy))
     expect(r.code).toBe(1)
     expect(r.err).toContain('T1 needs a ownsFiles array')
+  })
+
+  it.each(['.shipyard/checks/admin.check.mjs', './.shipyard/checks/lib.mjs', '.shipyard'])('rejects a dev owning %s', async (file) => {
+    const r = check('plan', await runDir('standard', many(1), [task('T1', ['a.ts', file])]))
+    expect(r.code).toBe(1)
+    expect(r.err).toContain(`T1 owns ${file}`)
+  })
+
+  it('allows a path that only looks like .shipyard', async () => {
+    expect(check('plan', await runDir('standard', many(1), [task('T1', ['docs/.shipyard-notes.md', '.shipyard-old/a.ts'])])).code).toBe(0)
   })
 
   it('rejects an unknown model', async () => {

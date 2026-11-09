@@ -105,6 +105,10 @@ describe('install', () => {
     expect(browser).toMatch(/^model: opus$/m)
     expect(browser).not.toMatch(/^tools:/m)
 
+    expect(tester).toContain('read the script')
+    expect(await agent('dev')).toContain('wire it into the start')
+    expect(await agent('manager')).toContain('Never give a dev a browser check')
+
     // The report writer and every later reader rely on one shape.
     for (const role of [tester, browser]) expect(role).toContain('{ "criteria": { "AC1": { "verdict"')
 
