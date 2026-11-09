@@ -89,14 +89,10 @@ build.
 Shipyard creates a branch in that repo, works there, and writes the report
 there. It does not merge and does not push — the branch is yours to review.
 
-**Watch it work.** Shipyard writes a live dashboard as it goes and tells you the
-path as soon as it exists. Open it once and leave the tab open — it reloads
-itself every 4 seconds while the run is in flight, and stops on its own when the
-run ends.
-
-```bash
-open .shipyard/runs/<run-id>/report.html
-```
+**Watch it work.** `/shipyard` starts the live view by itself, with nothing to
+install or run. In the Claude desktop app it opens in the browser pane. Elsewhere it
+gives you a `localhost` link. It updates by itself while the run is in flight and
+stops when the run ends.
 
 You see the stage pipeline advance with a timer on every stage, a run clock,
 the crew currently on deck with how long each agent has been working,
@@ -105,13 +101,6 @@ crew has touched (with a pulsing dot on the ones being written right now), and
 any agent that dies and gets respawned. If the harbormaster goes quiet for 20
 minutes the page raises **NO SIGNAL**, so a stalled run never looks like a busy
 one.
-
-For the most live view, run `npm run yard` in your Shipyard checkout and open
-the run from there. The yard re-renders on every refresh, so the working tree
-panel updates even while a single dev is mid-task.
-
-> **First run:** point it at something small and real so you can watch the
-> delegation happen before trusting it with anything that matters.
 
 ## The circuit
 
@@ -238,8 +227,9 @@ cd ~/Code/shipyard
 npm run dev          # or: npm run yard — same thing
 ```
 
-Opens a local control room at **http://localhost:7343** listing every Shipyard
-run across every repo under `~/Code`, newest first, with a status lamp per run
+`/shipyard` starts this server for you, so you only need these commands to look at
+the yard without a run. It's a local control room at **http://localhost:7343** listing
+every Shipyard run in `~/Code` and every repo `/shipyard` has run in, newest first, with a status lamp per run
 and a link into each full report. It reloads itself every 5 seconds while
 anything is building.
 
@@ -338,6 +328,8 @@ tools/build-command.mjs  bundles the above into ~/.claude/commands/shipyard.md
 tools/render-report.mjs  run directory → self-contained report.html
 tools/write-shipyard-report.mjs  run directory → the report Harbor Pilot reads
 tools/run-check.mjs      brief and plan checks, and the token ledger
+tools/serve.mjs          the yard server: every run behind one local URL
+tools/yard.mjs           starts the yard server detached, for /shipyard
 HARBOR.md                Harbor Pilot's manual, bundled into ~/.claude/commands/harbor.md
 tools/harbor.mjs         Harbor Pilot's plain-code half: context, snippets, checks
 docs/superpowers/        design spec and implementation plan

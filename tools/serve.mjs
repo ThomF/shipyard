@@ -19,8 +19,11 @@ import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 
-const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
-const RENDERER = join(repo, 'tools', 'render-report.mjs')
+// A sibling both in tools/ and once installed in ~/.claude/shipyard/.
+const RENDERER = join(dirname(fileURLToPath(import.meta.url)), 'render-report.mjs')
+// Repos /shipyard has run in, which tools/yard.mjs records. They may be anywhere.
+const ROOTS_FILE = join(homedir(), '.claude', 'shipyard', 'yard-roots.json')
+const IDLE_MS = Number(process.env.YARD_IDLE_MS || 0)
 const PORT = Number(process.env.PORT || 7343)
 const ROOTS = process.argv.slice(2).length ? process.argv.slice(2) : [join(homedir(), 'Code')]
 
@@ -96,7 +99,8 @@ function scan() {
 
 function scanNow() {
   const out = []
-  for (const root of ROOTS) {
+  const registered = readJson(ROOTS_FILE)
+  for (const root of [...ROOTS, ...(Array.isArray(registered) ? registered : [])]) {
     if (!existsSync(root)) continue
     walk(root, 0, out)
   }
@@ -225,18 +229,35 @@ or see the demo yard with <code>npm run demo</code>.</div>`}
 </script></body></html>`
 }
 
+// Only a server started for a run goes idle. `npm run yard` stays until ctrl-c.
+let lastSeen = Date.now()
+if (IDLE_MS > 0) {
+  setInterval(() => { if (Date.now() - lastSeen > IDLE_MS) process.exit(0) }, Math.min(IDLE_MS, 60_000) / 2).unref()
+}
+
 createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
+
+  if (url.pathname === '/health') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    return res.end(JSON.stringify({ yard: true, pid: process.pid }))
+  }
+  lastSeen = Date.now()
 
   if (url.pathname === '/r') {
     const dir = url.searchParams.get('d')
     // Only serve run directories the scan actually found — never arbitrary paths.
-    if (!dir || !scan().some(r => r.dir === dir)) {
+    const run = dir && scan().find(r => r.dir === dir)
+    if (!run) {
       res.writeHead(404, { 'content-type': 'text/plain' })
       return res.end('unknown run')
     }
-    try { execFileSync('node', [RENDERER, dir], { stdio: 'pipe' }) } catch {}
     const file = join(dir, 'report.html')
+    // A finished run's report is committed, so looking at it must not rewrite it.
+    const finished = run.state.stage === 'done' || (run.state.verdict ?? 'pending') !== 'pending'
+    if (!finished || !existsSync(file)) {
+      try { execFileSync('node', [RENDERER, dir], { stdio: 'pipe' }) } catch {}
+    }
     if (!existsSync(file)) {
       res.writeHead(500, { 'content-type': 'text/plain' })
       return res.end('could not render that run')

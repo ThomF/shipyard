@@ -106,6 +106,8 @@ describe('install', () => {
     expect(browser).not.toMatch(/^tools:/m)
 
     expect(await readFile(join(home, '.claude', 'shipyard', 'run-check.mjs'), 'utf8')).toContain('run-check')
+    expect(await readFile(join(home, '.claude', 'shipyard', 'yard.mjs'), 'utf8')).toContain('serve.mjs')
+    expect(await readFile(join(home, '.claude', 'shipyard', 'serve.mjs'), 'utf8')).toContain('render-report.mjs')
   })
 })
 
@@ -116,6 +118,12 @@ describe('build-command', () => {
     expect(command).toContain('node ~/.claude/shipyard/render-report.mjs .shipyard/runs/<run-id>')
     expect(command).not.toMatch(/cp ~\/\.claude\/shipyard/)
     expect(command).not.toMatch(/function workingTree/)
+  })
+
+  it('opens the live view by itself, without blocking on a server', () => {
+    expect(command).toContain('node ~/.claude/shipyard/yard.mjs .shipyard/runs/<run-id>')
+    expect(command).toMatch(/^allowed-tools: .*mcp__Claude_Browser__preview_start/m)
+    expect(command).toContain('never stops the run')
   })
 
   it('leaves role text to the agent definitions', () => {

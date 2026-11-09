@@ -32,7 +32,7 @@ import { homedir } from 'node:os'
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const manual = readFileSync(join(repo, 'SHIPYARD.md'), 'utf8').trim()
 const harborManual = readFileSync(join(repo, 'HARBOR.md'), 'utf8').trim()
-const HELPERS = ['render-report.mjs', 'write-shipyard-report.mjs', 'run-check.mjs', 'harbor.mjs']
+const HELPERS = ['render-report.mjs', 'write-shipyard-report.mjs', 'run-check.mjs', 'harbor.mjs', 'serve.mjs', 'yard.mjs']
 const SHIPYARD_HOME = '~/.claude/shipyard'
 
 const ROLE_DESCRIPTIONS = {
@@ -87,7 +87,7 @@ if (roles.length === 0) {
 const command = `---
 description: Pilot Shipyard into the current repo — plan, build, test, and fix a feature autonomously
 argument-hint: [--lite|--standard|--full] [--budget <tokens>] <feature request, or path to a story file>
-allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, TaskCreate, TaskUpdate
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, TaskCreate, TaskUpdate, mcp__Claude_Browser__preview_start
 ---
 
 # Shipyard — pilot in
@@ -142,10 +142,19 @@ node ${SHIPYARD_HOME}/render-report.mjs .shipyard/runs/<run-id>
 It regenerates \`report.html\`, which reloads itself every 4 seconds while the run is
 in flight and stops when it ends, so the user can keep one tab open and watch.
 
-Tell the user the path to \`report.html\` **as soon as it first exists**, not at
-the end. Also mention that \`npm run yard\` in their Shipyard checkout gives a
-fully live view at http://localhost:7343 that re-renders on every refresh, so
-it shows files changing even while a dev is mid-task.
+**Open the live view as soon as \`state.json\` first exists**, without being asked:
+
+\`\`\`bash
+node ${SHIPYARD_HOME}/yard.mjs .shipyard/runs/<run-id>
+\`\`\`
+
+It starts the yard server if needed, returns at once, and prints the run's URL. Never
+start the server any other way, because \`npm run yard\` never returns. If you have
+\`mcp__Claude_Browser__preview_start\`, call it with that \`url\`, which shows the run in
+this desktop session. Do not open \`report.html\` there, because the pane shows local
+files as snapshots that never update. Otherwise give the user the URL. **A view that
+fails to start never stops the run:** give the user the path to \`report.html\`, and
+carry on.
 
 Rendering is one cheap local \`node\` call, so do it liberally. Never read its output
 beyond the path it prints.
