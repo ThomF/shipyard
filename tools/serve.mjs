@@ -13,7 +13,7 @@
 // behind one URL that does not change.
 
 import { createServer } from 'node:http'
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, realpathSync, statSync } from 'node:fs'
 import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -29,6 +29,11 @@ const ROOTS = process.argv.slice(2).length ? process.argv.slice(2) : [join(homed
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')) } catch { return null } }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+/**
+ * A path's one true spelling. ~/Code and ~/code are the same folder on a Mac, and
+ * .native is the version that resolves case as well as symlinks.
+ */
+const canonical = (p) => { try { return realpathSync.native(p) } catch { return p } }
 
 /**
  * Name a run's project from its path. A worktree lives at
@@ -102,7 +107,7 @@ function scanNow() {
   const registered = readJson(ROOTS_FILE)
   for (const root of [...ROOTS, ...(Array.isArray(registered) ? registered : [])]) {
     if (!existsSync(root)) continue
-    walk(root, 0, out)
+    walk(canonical(root), 0, out)
   }
   return out
     .filter((r, i, a) => a.findIndex(x => x.dir === r.dir) === i)
@@ -245,7 +250,8 @@ createServer((req, res) => {
   lastSeen = Date.now()
 
   if (url.pathname === '/r') {
-    const dir = url.searchParams.get('d')
+    const asked = url.searchParams.get('d')
+    const dir = asked && canonical(asked)
     // Only serve run directories the scan actually found — never arbitrary paths.
     const run = dir && scan().find(r => r.dir === dir)
     if (!run) {

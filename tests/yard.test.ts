@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from 'vitest'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -79,6 +79,21 @@ describe('yard', () => {
     expect(r.out).toContain(`localhost:${t.port}/`)
     const second = await fetch(`http://127.0.0.1:${t.port}/health`).then(r => r.json()) as { pid: number }
     expect(second.pid).toBe(first.pid)
+  })
+
+  it('lists a run once when two roots are the same folder, and opens it by either path', async () => {
+    const t = await target()
+    // HOME/Code is a default root, and yard.mjs registers the repo as another.
+    await symlink(t.dir, join(t.home, 'Code'))
+    const r = await yard(t.runDir, t.home, t.port)
+    expect(r.code).toBe(0)
+
+    const page = await fetch(`http://127.0.0.1:${t.port}/`).then(res => res.text())
+    expect(page.match(/\/r\?d=/g)).toHaveLength(1)
+
+    const viaLink = encodeURIComponent(join(t.home, 'Code', '.shipyard', 'runs', 'r1'))
+    expect((await fetch(`http://127.0.0.1:${t.port}/r?d=${viaLink}`)).status).toBe(200)
+    expect((await fetch(r.out.replace('localhost', '127.0.0.1'))).status).toBe(200)
   })
 
   it('moves to the next port when something else holds the first', async () => {
