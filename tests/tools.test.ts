@@ -120,3 +120,22 @@ describe('build-command', () => {
     expect(command.length).toBeLessThan(30_000)
   })
 })
+
+describe('the tester role', () => {
+  it('carries a click helper that reports every point that did nothing', async () => {
+    const role = await readFile(join(repo, 'agents', 'tester.md'), 'utf8')
+    const code = /```js\n([\s\S]*?)```/.exec(role)![1]!
+    const deadSpots = new Function(`${code}; return deadSpots`)()
+
+    // A stand-in for a 100x100 element where only the top third responds.
+    let lastY = 0
+    const page = { mouse: { click: async (_x: number, y: number) => { lastY = y } } }
+    const target = { scrollIntoViewIfNeeded: async () => {}, boundingBox: async () => ({ x: 0, y: 0, width: 100, height: 100 }) }
+    const reset = async () => {}
+
+    const dead = await deadSpots(page, target, async () => lastY < 33, reset)
+    expect(dead).toHaveLength(6)
+    expect(dead).toContainEqual([0.5, 0.5])
+    expect(await deadSpots(page, target, async () => true, reset)).toEqual([])
+  })
+})

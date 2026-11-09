@@ -64,18 +64,24 @@ for (let i = 0; i + 1 < statuses.length; i += 2) {
   files_changed.push({ path: statuses[i + 1], status })
 }
 
-/** The tester's last word: the highest cycle's latest fix round. */
+/**
+ * The testers' last word on each criterion, in the highest cycle with a report.
+ * Reports are read in order, because a re-test lists only what it settled.
+ */
 function latestTestReport() {
   const cyclesDir = join(runDir, 'cycles')
   if (!existsSync(cyclesDir)) return null
   const cycles = readdirSync(cyclesDir).filter(n => /^\d+$/.test(n)).map(Number).sort((a, b) => b - a)
   for (const cycle of cycles) {
     const dir = join(cyclesDir, String(cycle))
-    const rounds = readdirSync(dir)
-      .map(name => /^test-report(?:-fix(\d+))?\.json$/.exec(name))
+    const reports = readdirSync(dir)
+      .map(name => /^test-report(?:-(browser)|-fix(\d+))?\.json$/.exec(name))
       .filter(Boolean)
-      .sort((a, b) => Number(b[1] ?? 0) - Number(a[1] ?? 0))
-    if (rounds.length > 0) return readJson(join(dir, rounds[0][0]), rounds[0][0])
+      .map(m => ({ name: m[0], order: m[2] ? 1 + Number(m[2]) : m[1] ? 1 : 0 }))
+      .sort((a, b) => a.order - b.order)
+    if (reports.length > 0) {
+      return { criteria: Object.assign({}, ...reports.map(r => readJson(join(dir, r.name), r.name).criteria)) }
+    }
   }
   return null
 }

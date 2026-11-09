@@ -129,6 +129,16 @@ describe('write-shipyard-report', () => {
     ])
   })
 
+  it('keeps every criterion when a re-test lists only what it settled', async () => {
+    const b = await builtRepo()
+    const cycle = join(b.runDir, 'cycles', '1')
+    await writeFile(join(cycle, 'test-report-browser.json'), JSON.stringify({ criteria: { AC2: { verdict: 'pass', evidence: 'browser' } } }))
+    execFileSync('node', [WRITER, b.runDir], { encoding: 'utf8' })
+    const tests = (await report(b)).tests
+    expect(tests).toContainEqual({ name: 'AC1: Returns 404', status: 'pass', evidence: 'second' })
+    expect(tests).toContainEqual({ name: 'AC2', status: 'pass', evidence: 'browser' })
+  })
+
   it('takes test results from the latest fix round', async () => {
     const b = await builtRepo()
     expect((await report(b)).tests).toEqual([{ name: 'AC1: Returns 404', status: 'pass', evidence: 'second' }])

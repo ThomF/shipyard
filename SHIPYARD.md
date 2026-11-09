@@ -94,7 +94,7 @@ default:
 - A dev uses its plan task's `model`: sonnet for docs, config, contracts, API
   clients and other mechanical work; opus for design-heavy or cross-cutting work.
 - A task whose sonnet dev fails or dies once goes to opus from then on.
-- A tester following a checklist or a script runs on sonnet. The exploratory pass
+- The checklist tester and any re-test tester run on sonnet. The browser tester
   runs on opus.
 
 **Separation of duties is not optional.** A tester reports defects; it does not
@@ -181,7 +181,9 @@ Only devs write code. The manager decides and never touches files.
       spec.md                the manager's written intent for this cycle
       plan.json              task DAG
       tasks/<task-id>.json   one per dev
-      test-report.json       tester verdict
+      test-report.json       checklist tester's verdicts
+      test-report-browser.json   browser tester's verdicts
+      test-report-fix<n>.json    re-test verdicts for fix round n
       defects.json           triaged defects
     agents/<agent-id>.md     full subagent reports — write-only
   checks/browser.mjs         the browser check script, once one exists
@@ -389,47 +391,61 @@ Write `tasks/<task-id>.json` per dev.
 
 ### 5. Test
 
-Spawn a tester. Give it the acceptance criteria with their `check` tags, the test
-command from the codebase map, and the path for its report.
+Run the full test command yourself first, with output to `cycles/<n>/test-output.txt`.
+Then dispatch up to two testers at once. Neither repeats the other's work, and each
+returns a verdict per criterion with evidence. A criterion it could not test is
+`untested`, not `pass`. A test that passes trivially because it asserts nothing is
+a fail.
 
-It returns a verdict per criterion — pass, fail, or untested — with evidence. A
-criterion it could not test is `untested`, not `pass`. A test that passes trivially
-because it asserts nothing is a fail.
+- **Checklist tester, on sonnet**, for `unit`, `api` and `command` criteria. It gets
+  those criteria and the path of the test output. It confirms a named test exists
+  and truly asserts the behaviour, then relies on that output, running a command
+  only for a `command` criterion. Evidence names the test. It starts no browser. It
+  writes `test-report.json`.
+- **Browser tester, on opus**, only when a criterion is `browser`. It gets those
+  criteria and the list of changed files, and writes `test-report-browser.json`. It
+  works in this order:
+  1. **Explore first, once per run:** at most 25 browser tool calls, starting from
+     the screens the change touches, using the app as a user would.
+  2. **Then script what it learned** in `.shipyard/checks/browser.mjs`, extending the
+     file if it exists. One command covers every browser criterion. The script starts
+     the app itself on a non-default port against a temp copy of the data, **never
+     the owner's data**, and prints `PASS <id>` or `FAIL <id>`. Verdicts come from
+     running it. Screenshots go to a temp directory, not the repo.
 
-- **`unit`, `api`, `command`:** it confirms a named test exists and truly asserts
-  the behaviour, then relies on the test command's result. Evidence names the test.
-  It starts no browser.
-- **`browser`:** the first tester to need one writes `.shipyard/checks/browser.mjs`,
-  one Playwright script covering every browser criterion, and runs it as a command
-  with output to a file. If it already exists, it extends and runs that. It starts
-  the app itself on a non-default port against a temp copy of the data, **never the
-  owner's data**, and prints `PASS <id>` or `FAIL <id>` per criterion. Agent-driven
-  browser use is only for investigating a script failure.
+What the browser tester finds outside the criteria goes to `observations`. **If it
+shows that a criterion fails in real use, that criterion is `fail`,** even when a
+test or an earlier verdict passed it.
 
 **Before the first test stage, if any criterion is `browser` and the target has no
 Playwright, ask the owner once** whether to add it as a dev dependency. It is
 Apache-2.0, and a dev adds and reports it under the dependency-license rule. If the
-owner declines, testers drive the browser directly, within the 25-call limit below.
+owner declines, the browser tester judges directly within its 25 calls, with no
+script, and every re-test of a browser criterion needs a tester.
 
-**One exploratory pass per run, at most.** A script checks only what it was told to,
-so when the run has a browser criterion and a user-visible change, dispatch one
-separate tester on opus once the first test pass is done: at most 25 browser tool
-calls, using the app as a user would, reporting what it saw. What it finds outside
-the criteria goes to `observations`.
-
-Then **verify the tester did not modify the tree**, with the `git status` command
+After each tester, **verify it did not modify the tree**, with the `git status` command
 under **Roles**. If it lists anything, the tester wrote something it should not have. Revert
 the changes, record it in the ledger, and treat the run as compromised — this is
 the check that makes separation of duties real rather than advisory.
 
-Write `test-report.json`. If every criterion passes, go to **Report**.
+If every criterion passes, go to **Report**.
 
-**Re-tests are scoped.** Before a re-test, run the full test command yourself,
-output to a file; you need only the exit code and the last few lines. If it is
-green, criteria that passed stay `pass`, and the tester's dispatch lists **only the
-failing criteria**, re-running `checks/browser.mjs` for any that are `browser`. If
-it goes red, every criterion is back in scope for that round. Record `scoped-retest`
-in `fastPaths`.
+**Re-test by command when you can.** After a fix, run the full test command and any
+`checks/browser.mjs` yourself, with output to files; you need only the exit codes and
+the last few lines. If either goes red, every criterion is back in scope: dispatch
+the testers again, without exploring. If both are green, criteria that passed stay
+`pass`, and each failing criterion is settled one of two ways:
+
+- **By command**, when the check that reported the failure (a named test, or the
+  script's `FAIL <id>`) now passes, and `git diff --name-only <commit before the fix>
+  HEAD` shows the fix changed neither that test's file nor `.shipyard/checks/`. Use
+  the output line as evidence. Record `command-retest` in `fastPaths`.
+- **By a tester, on sonnet, listing only those criteria**, in every other case: the
+  check itself was too weak, or the fix changed it. Record `scoped-retest` in
+  `fastPaths`.
+
+Round `n`'s verdicts go in `test-report-fix<n>.json`, listing only the criteria it
+settled.
 
 ### 6. Triage and fix
 

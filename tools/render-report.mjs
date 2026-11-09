@@ -44,6 +44,7 @@ const cycles = listDirs(join(runDir, 'cycles')).sort().map(n => {
     spec: readText(join(dir, 'spec.md')),
     plan: readJson(join(dir, 'plan.json'), null),
     testReport: readJson(join(dir, 'test-report.json'), null),
+    browserReport: readJson(join(dir, 'test-report-browser.json'), null),
     defects: readJson(join(dir, 'defects.json'), null),
     tasks: listFiles(join(dir, 'tasks')).map(f => readJson(join(dir, 'tasks', f))).filter(Boolean),
   }
@@ -366,6 +367,7 @@ if (usage.length) {
     <table><thead><tr><th>Task</th><th>Goal</th><th>Owns files</th><th>After</th><th>State</th></tr></thead><tbody>\${rows}</tbody></table>
     \${c.spec ? '<details><summary>Manager spec — what it intended to build</summary><div class="inner"><pre>' + esc(c.spec) + '</pre></div></details>' : ''}
     \${c.testReport ? '<details><summary>Tester verdict + evidence</summary><div class="inner"><pre>' + esc(JSON.stringify(c.testReport, null, 2)) + '</pre></div></details>' : ''}
+    \${c.browserReport ? '<details><summary>Browser tester verdict + evidence</summary><div class="inner"><pre>' + esc(JSON.stringify(c.browserReport, null, 2)) + '</pre></div></details>' : ''}
     \${c.defects ? '<details><summary>Triaged defects</summary><div class="inner"><pre>' + esc(JSON.stringify(c.defects, null, 2)) + '</pre></div></details>' : ''}
   </div></section>\`);
 });

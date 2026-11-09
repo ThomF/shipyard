@@ -153,7 +153,7 @@ where it can do so without weakening a check. Each one taken is recorded in
 
 | Fast path | What it skips |
 |---|---|
-| Model split | Surveyors, the reporter, mechanical dev tasks and checklist testers run on sonnet; the rest stay on opus |
+| Model split | Surveyors, the reporter, mechanical dev tasks and the checklist and re-test testers run on sonnet; the rest stay on opus |
 | Parallel intake | Survey starts alongside intake instead of after it |
 | `survey-cache` | The codebase map is cached in `.git/shipyard/` and reused when nothing structural changed; only the request-specific surveyor runs |
 | Sized survey | One surveyor for small repos, three for large ones, never five |
@@ -187,11 +187,16 @@ never picks `full` itself. With `--budget`, it pauses and asks before dispatchin
 more agents once the run's agents have used that many tokens. There is no default
 budget yet, and the count can't see your account's usage meter.
 
-Each criterion is tagged `unit`, `api`, `command` or `browser`. Only `browser`
-criteria use a browser, through one Playwright script at `.shipyard/checks/browser.mjs`
-that re-runs with one command. Shipyard asks before adding Playwright to a repo. One
-exploratory pass per run, capped at 25 browser tool calls, catches what a script
-was never told to check.
+Each criterion is tagged `unit`, `api`, `command` or `browser`, and two testers
+split the work. A sonnet tester checks that the named tests truly assert the
+behaviour, and starts no browser. An opus tester handles the `browser` criteria: it
+uses the app first, in at most 25 browser tool calls, then writes what it learned
+into one Playwright script at `.shipyard/checks/browser.mjs`. The script clicks
+several points across each element, because a click that lands at one point proves
+little. Shipyard asks before adding Playwright to a repo.
+
+After a fix, the harbormaster re-runs the tests and the script itself. A tester is
+needed only if the check was too weak or the fix changed it.
 
 ## Roles are files, not code
 
@@ -215,7 +220,7 @@ conservative? Change `dev.md`. Want a different model? Change one line (`opus`,
 |---|---|---|---|
 | `manager.md` | opus | no | yes — triages and assigns |
 | `dev.md` | opus (sonnet for mechanical tasks) | **yes** | no |
-| `tester.md` | opus (sonnet for checklists) | no | reports verdict only |
+| `tester.md` | opus for browser work, sonnet otherwise | no | reports verdict only |
 | `intake.md` | opus | no | no |
 | `surveyor.md` | sonnet | no | no |
 | `reporter.md` | sonnet | no | no |
