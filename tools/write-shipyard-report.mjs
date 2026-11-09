@@ -64,6 +64,17 @@ for (let i = 0; i + 1 < statuses.length; i += 2) {
   files_changed.push({ path: statuses[i + 1], status })
 }
 
+/** Testers write criteria keyed by id, or sometimes as a list of { id, verdict, evidence }. */
+function criteriaById(report, name) {
+  const { criteria } = report
+  if (!Array.isArray(criteria)) return criteria
+  return Object.fromEntries(criteria.map((entry) => {
+    if (!entry?.id) fail(`${name} lists a criterion with no id`)
+    const { id, ...result } = entry
+    return [id, result]
+  }))
+}
+
 /**
  * The testers' last word on each criterion, in the highest cycle with a report.
  * Reports are read in order, because a re-test lists only what it settled.
@@ -80,7 +91,7 @@ function latestTestReport() {
       .map(m => ({ name: m[0], order: m[2] ? 1 + Number(m[2]) : m[1] ? 1 : 0 }))
       .sort((a, b) => a.order - b.order)
     if (reports.length > 0) {
-      return { criteria: Object.assign({}, ...reports.map(r => readJson(join(dir, r.name), r.name).criteria)) }
+      return { criteria: Object.assign({}, ...reports.map(r => criteriaById(readJson(join(dir, r.name), r.name), r.name))) }
     }
   }
   return null

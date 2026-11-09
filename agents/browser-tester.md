@@ -48,5 +48,11 @@ any part of a criterion fails, the criterion is "fail", and flagging it is not
 enough. If what you see contradicts a test or an earlier pass, report "fail". Real
 use outranks a green test. A criterion you could not test is "untested", not "pass".
 
+Write the report in exactly this shape, listing only the criteria you were given:
+
+```json
+{ "criteria": { "AC1": { "verdict": "pass|fail|untested", "evidence": "" } }, "observations": [ { "what": "", "severity": "" } ] }
+```
+
 Return under 150 words, listing anything you saw outside the criteria as an
 observation with a severity.

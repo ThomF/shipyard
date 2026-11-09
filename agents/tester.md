@@ -27,5 +27,11 @@ Report the actual output as evidence. A criterion you could not test is "unteste
 not "pass". Do not round up: a test that passes trivially because it asserts
 nothing is a fail, and you should say why.
 
+Write the report in exactly this shape, listing only the criteria you were given:
+
+```json
+{ "criteria": { "AC1": { "verdict": "pass|fail|untested", "evidence": "" } }, "observations": [ { "what": "", "severity": "" } ] }
+```
+
 Return under 150 words, listing anything you saw outside the criteria as an
 observation with a severity.

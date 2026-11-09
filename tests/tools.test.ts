@@ -105,6 +105,9 @@ describe('install', () => {
     expect(browser).toMatch(/^model: opus$/m)
     expect(browser).not.toMatch(/^tools:/m)
 
+    // The report writer and every later reader rely on one shape.
+    for (const role of [tester, browser]) expect(role).toContain('{ "criteria": { "AC1": { "verdict"')
+
     expect(await readFile(join(home, '.claude', 'shipyard', 'run-check.mjs'), 'utf8')).toContain('run-check')
     expect(await readFile(join(home, '.claude', 'shipyard', 'yard.mjs'), 'utf8')).toContain('serve.mjs')
     expect(await readFile(join(home, '.claude', 'shipyard', 'serve.mjs'), 'utf8')).toContain('render-report.mjs')
@@ -124,6 +127,10 @@ describe('build-command', () => {
     expect(command).toContain('node ~/.claude/shipyard/yard.mjs .shipyard/runs/<run-id>')
     expect(command).toMatch(/^allowed-tools: .*mcp__Claude_Browser__preview_start/m)
     expect(command).toContain('never stops the run')
+  })
+
+  it("does not repeat a tester's browser checks when nothing has changed", () => {
+    expect(command).toContain("Do not re-run a tester's checks")
   })
 
   it('leaves role text to the agent definitions', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, readFile, readdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -137,6 +137,30 @@ describe('write-shipyard-report', () => {
     const tests = (await report(b)).tests
     expect(tests).toContainEqual({ name: 'AC1: Returns 404', status: 'pass', evidence: 'second' })
     expect(tests).toContainEqual({ name: 'AC2', status: 'pass', evidence: 'browser' })
+  })
+
+  it('reads criteria written as a list, by id rather than by position', async () => {
+    const b = await builtRepo()
+    const cycle = join(b.runDir, 'cycles', '1')
+    await writeFile(join(cycle, 'test-report.json'), JSON.stringify({ criteria: [
+      { id: 'AC1', verdict: 'pass', evidence: 'unit' },
+      { id: 'AC2', verdict: 'untested', evidence: 'browser criterion' },
+    ] }))
+    await writeFile(join(cycle, 'test-report-browser.json'), JSON.stringify({ criteria: [
+      { id: 'AC2', verdict: 'pass', evidence: 'browser' },
+    ] }))
+    await rm(join(cycle, 'test-report-fix1.json'))
+    execFileSync('node', [WRITER, b.runDir], { encoding: 'utf8' })
+    expect((await report(b)).tests).toEqual([
+      { name: 'AC1: Returns 404', status: 'pass', evidence: 'unit' },
+      { name: 'AC2', status: 'pass', evidence: 'browser' },
+    ])
+  })
+
+  it('refuses a listed criterion with no id', async () => {
+    const b = await builtRepo()
+    await writeFile(join(b.runDir, 'cycles', '1', 'test-report-fix1.json'), JSON.stringify({ criteria: [{ verdict: 'pass' }] }))
+    expect(() => execFileSync('node', [WRITER, b.runDir], { stdio: 'pipe' })).toThrow(/test-report-fix1\.json lists a criterion with no id/)
   })
 
   it('takes test results from the latest fix round', async () => {

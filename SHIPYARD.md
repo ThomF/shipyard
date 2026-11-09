@@ -427,7 +427,8 @@ under **Roles**. If it lists anything, the tester wrote something it should not 
 the changes, record it in the ledger, and treat the run as compromised — this is
 the check that makes separation of duties real rather than advisory.
 
-If every criterion passes, go to **Report**.
+If every criterion passes, go to **Report**. Do not re-run a tester's checks: nothing
+has changed since it ran them.
 
 **Re-test by command when you can.** After a fix, run the full test command, and
 every browser check with `node <shipyard>/tools/run-check.mjs checks <run-dir>
