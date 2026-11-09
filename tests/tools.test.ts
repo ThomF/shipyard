@@ -79,21 +79,41 @@ describe('render-report', () => {
   })
 })
 
+describe('install', () => {
+  it('installs each role as an agent definition with its model and tool limits', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'shipyard-home-'))
+    execFileSync('node', [BUILD], { env: { ...process.env, HOME: home }, encoding: 'utf8' })
+    const agent = (role: string) => readFile(join(home, '.claude', 'agents', `shipyard-${role}.md`), 'utf8')
+
+    const dev = await agent('dev')
+    expect(dev).toMatch(/^name: shipyard-dev$/m)
+    expect(dev).toMatch(/^description: "[^"]+"$/m)
+    expect(dev).toMatch(/^model: opus$/m)
+    expect(dev).toMatch(/^tools: Read, Grep, Glob, Write, Edit, Bash$/m)
+    expect(dev).toMatch(/^permissionMode: acceptEdits$/m)
+    expect(await agent('surveyor')).toMatch(/^model: sonnet$/m)
+    expect(await agent('reporter')).toMatch(/^tools: Read, Grep, Glob$/m)
+
+    const tester = await agent('tester')
+    expect(tester).toMatch(/^disallowedTools: Write, Edit, NotebookEdit, Agent$/m)
+    expect(tester).not.toMatch(/^tools:/m)
+
+    expect(await readFile(join(home, '.claude', 'shipyard', 'run-check.mjs'), 'utf8')).toContain('run-check')
+  })
+})
+
 describe('build-command', () => {
   const command = run('node', [BUILD, '--print'])
 
-  it('copies the installed renderer instead of inlining it', () => {
-    expect(command).toMatch(/cp ~\/\.claude\/shipyard\/render-report\.mjs \.shipyard\/render-report\.mjs/)
-    expect(command).not.toMatch(/# THE RENDERER/)
+  it('runs helpers from the install dir, never copying them into the target', () => {
+    expect(command).toContain('node ~/.claude/shipyard/render-report.mjs .shipyard/runs/<run-id>')
+    expect(command).not.toMatch(/cp ~\/\.claude\/shipyard/)
     expect(command).not.toMatch(/function workingTree/)
   })
 
-  it('bundles every role with its model', () => {
-    for (const role of ['intake', 'surveyor', 'manager', 'dev', 'tester', 'reporter']) {
-      expect(command).toContain(`## Role: ${role}`)
-    }
-    expect(command).toMatch(/model: sonnet/)
-    expect(command).toMatch(/model: opus/)
+  it('leaves role text to the agent definitions', () => {
+    expect(command).toContain('shipyard-<role>')
+    expect(command).not.toMatch(/## Role: /)
   })
 
   it('stays small enough to load quickly', () => {

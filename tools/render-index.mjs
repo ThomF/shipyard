@@ -6,8 +6,8 @@
 // Writes <project>/.shipyard/index.html. Self-contained, opens from file://.
 //
 // The CSS is deliberately duplicated from render-report.mjs rather than shared.
-// render-report.mjs gets bundled verbatim into the slash command and written
-// into target repos, where it cannot resolve an import from this repo.
+// render-report.mjs is installed on its own at ~/.claude/shipyard/, where it
+// cannot resolve an import from this repo.
 
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'

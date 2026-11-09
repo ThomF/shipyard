@@ -48,11 +48,12 @@ git clone git@github.com:ThomF/shipyard.git && cd shipyard
 npm run install-command
 ```
 
-That bundles `SHIPYARD.md` and the six role files into a self-contained slash
-command at `~/.claude/commands/shipyard.md`, so `/shipyard` works from inside
-any repository, and installs the dashboard renderer beside it at
-`~/.claude/shipyard/render-report.mjs`. Each run copies the renderer in with one
-`cp` rather than having the harbormaster re-type it.
+That bundles `SHIPYARD.md` into a self-contained slash command at
+`~/.claude/commands/shipyard.md`, so `/shipyard` works from inside any repository.
+It installs the six roles as agents at `~/.claude/agents/shipyard-<role>.md` and the
+helper scripts at `~/.claude/shipyard/`, where each run calls them, so nothing is
+copied into your repo. Start a new Claude Code session after installing so it picks
+up the agents.
 
 > **Re-run `npm run install-command` after editing `SHIPYARD.md`, `HARBOR.md`, any
 > role file, or a script in `tools/`.** The command is generated; the repo is the source of
@@ -152,7 +153,7 @@ where it can do so without weakening a check. Each one taken is recorded in
 
 | Fast path | What it skips |
 |---|---|
-| Model split | Surveyors and the reporter run on sonnet; roles that decide stay on opus |
+| Model split | Surveyors, the reporter, mechanical dev tasks and checklist testers run on sonnet; the rest stay on opus |
 | Parallel intake | Survey starts alongside intake instead of after it |
 | `survey-cache` | The codebase map is cached in `.git/shipyard/` and reused when nothing structural changed; only the request-specific surveyor runs |
 | Sized survey | One surveyor for small repos, three for large ones, never five |
@@ -164,6 +165,33 @@ where it can do so without weakening a check. Each one taken is recorded in
 
 Stage timings are recorded too, and `PROJECT-REPORT.md` notes the slowest stage
 of every run, so you can see where the time actually goes.
+
+## Keeping token use down
+
+Every run records what each agent used in `state.json`, and the report totals it by
+role. The harbormaster's own tokens are not included, because no figure is available.
+
+| Size | Use for | Stages skipped | Devs | Criteria (browser) |
+|---|---|---|---|---|
+| `--lite` | One page, endpoint or fix | Intake and manager agents | 1-2 | 8 (1) |
+| `--standard` | A normal feature | None | 3-5 | 12 (3) |
+| `--full` | Must be asked for by name | None | Up to 10 | 30 (no cap) |
+
+```
+/shipyard --lite add an about page
+/shipyard --budget 500000 add CSV export to the reports page
+```
+
+With no size named, the harbormaster picks `lite` or `standard` and says why. It
+never picks `full` itself. With `--budget`, it pauses and asks before dispatching
+more agents once the run's agents have used that many tokens. There is no default
+budget yet, and the count can't see your account's usage meter.
+
+Each criterion is tagged `unit`, `api`, `command` or `browser`. Only `browser`
+criteria use a browser, through one Playwright script at `.shipyard/checks/browser.mjs`
+that re-runs with one command. Shipyard asks before adding Playwright to a repo. One
+exploratory pass per run, capped at 25 browser tool calls, catches what a script
+was never told to check.
 
 ## Roles are files, not code
 
@@ -186,16 +214,16 @@ conservative? Change `dev.md`. Want a different model? Change one line (`opus`,
 | Role | Model | Writes code | Decides "done" |
 |---|---|---|---|
 | `manager.md` | opus | no | yes — triages and assigns |
-| `dev.md` | opus | **yes** | no |
-| `tester.md` | opus | no | reports verdict only |
+| `dev.md` | opus (sonnet for mechanical tasks) | **yes** | no |
+| `tester.md` | opus (sonnet for checklists) | no | reports verdict only |
 | `intake.md` | opus | no | no |
 | `surveyor.md` | sonnet | no | no |
 | `reporter.md` | sonnet | no | no |
 
-Separation of duties is checked, not trusted. Testers are dispatched without
-write tools — but they need `Bash` to run tests, and Bash can write files, so
-after a tester runs the harbormaster verifies the tree is clean and fails the
-run if it isn't.
+Separation of duties is checked, not trusted. Testers have no write or edit
+tools — but they need `Bash` to run tests, and Bash can write files, so after a
+tester runs the harbormaster verifies that nothing outside `.shipyard/` changed and
+fails the run if it did.
 
 ## The yard — one URL for every run
 
@@ -303,6 +331,7 @@ agents/*.md              role definitions — edit these to tune the team
 tools/build-command.mjs  bundles the above into ~/.claude/commands/shipyard.md
 tools/render-report.mjs  run directory → self-contained report.html
 tools/write-shipyard-report.mjs  run directory → the report Harbor Pilot reads
+tools/run-check.mjs      brief and plan checks, and the token ledger
 HARBOR.md                Harbor Pilot's manual, bundled into ~/.claude/commands/harbor.md
 tools/harbor.mjs         Harbor Pilot's plain-code half: context, snippets, checks
 docs/superpowers/        design spec and implementation plan

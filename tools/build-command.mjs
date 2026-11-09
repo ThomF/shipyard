@@ -1,25 +1,28 @@
 #!/usr/bin/env node
-// Bundles SHIPYARD.md + agents/*.md into one self-contained slash command at
-// ~/.claude/commands/shipyard.md, so `/shipyard` works from inside ANY repo.
+// Installs Shipyard: SHIPYARD.md becomes one self-contained slash command at
+// ~/.claude/commands/shipyard.md, so `/shipyard` works from inside ANY repo, and
+// agents/*.md become agent definitions at ~/.claude/agents/shipyard-<role>.md.
 //
 // Why bundle: Claude Code can only read files inside the folder it was started
 // in. Run from ~/Code/monitiv, it cannot reach ~/Code/shipyard. The harness
-// loads command files regardless of cwd, so everything the harbormaster needs
-// has to live inside the command itself.
+// loads command and agent files regardless of cwd.
+//
+// Why agent definitions rather than inlined role text: the harbormaster used to
+// repeat a role in every dispatch, paying for it in each prompt and carrying
+// every role in its own context. A definition also enforces the role's tool
+// limits, which the Agent tool has no parameter for.
 //
 // SHIPYARD.md stays the single source of truth. Re-run this after editing it or
 // any role file. It builds /harbor from HARBOR.md the same way, for reading a
 // build afterwards.
 //
-//   node tools/build-command.mjs                  install to ~/.claude/commands/
+//   node tools/build-command.mjs                  install to ~/.claude/
 //   node tools/build-command.mjs --print          write /shipyard to stdout instead
 //   node tools/build-command.mjs --print-harbor   write /harbor to stdout instead
 //
-// The report renderer is NOT inlined into the command. It is installed beside
-// it at ~/.claude/shipyard/render-report.mjs and copied into each target with
-// one `cp`. Inlining it meant the harbormaster had to re-type ~16 KB of
-// JavaScript verbatim at the start of every run: slow, token-expensive, and a
-// single transcription slip broke the live view.
+// The helper scripts are NOT inlined and NOT copied into targets. They are
+// installed at ~/.claude/shipyard/ and run from there, so a run leaves no stray
+// files in the target's working tree.
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -29,13 +32,49 @@ import { homedir } from 'node:os'
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const manual = readFileSync(join(repo, 'SHIPYARD.md'), 'utf8').trim()
 const harborManual = readFileSync(join(repo, 'HARBOR.md'), 'utf8').trim()
-const RENDERER_SRC = join(repo, 'tools', 'render-report.mjs')
+const HELPERS = ['render-report.mjs', 'write-shipyard-report.mjs', 'run-check.mjs', 'harbor.mjs']
 const SHIPYARD_HOME = '~/.claude/shipyard'
+
+const ROLE_DESCRIPTIONS = {
+  dev: 'Shipyard developer: builds one task, touching only the files it owns',
+  intake: 'Shipyard intake: turns a request into a contract of acceptance criteria',
+  manager: 'Shipyard manager: decomposes a goal into a task DAG, or triages defects',
+  reporter: 'Shipyard reporter: writes the report a human reads instead of watching a run',
+  surveyor: 'Shipyard surveyor: maps one concern of an existing repository',
+  tester: 'Shipyard tester: verifies acceptance criteria and reports a verdict; fixes nothing',
+}
+
+/** One role file as an agent definition for the Claude Code harness. */
+function agentDefinition(name, raw) {
+  const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(raw)
+  if (!match) throw new Error(`agents/${name}.md is missing a frontmatter block`)
+  const field = (key) => new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(match[1])?.[1]?.trim()
+  const description = ROLE_DESCRIPTIONS[name]
+  if (!description) throw new Error(`no description for role ${name}: add it to ROLE_DESCRIPTIONS`)
+  const tools = (field('tools') ?? '').replace(/^\[|\]$/g, '')
+  // The tester needs browser tools, whose names vary by machine, so it cannot be
+  // given an allowlist. Deny the tools that write or delegate instead.
+  const access = name === 'tester' ? 'disallowedTools: Write, Edit, NotebookEdit, Agent' : `tools: ${tools}`
+  const permissionMode = field('permissionMode')
+  return [
+    '---',
+    `name: shipyard-${name}`,
+    // Quoted: an unquoted ": " inside a YAML value is a parse error.
+    `description: ${JSON.stringify(description)}`,
+    `model: ${field('model')}`,
+    access,
+    ...(permissionMode ? [`permissionMode: ${permissionMode}`] : []),
+    '---',
+    match[2].trim(),
+    '',
+  ].join('\n')
+}
 
 const roles = readdirSync(join(repo, 'agents'))
   .filter(f => f.endsWith('.md'))
   .sort()
-  .map(f => ({ name: f.replace(/\.md$/, ''), body: readFileSync(join(repo, 'agents', f), 'utf8').trim() }))
+  .map(f => f.replace(/\.md$/, ''))
+  .map(name => ({ name, definition: agentDefinition(name, readFileSync(join(repo, 'agents', `${name}.md`), 'utf8')) }))
 
 if (roles.length === 0) {
   console.error('no role files found in agents/ — refusing to build an empty command')
@@ -44,15 +83,15 @@ if (roles.length === 0) {
 
 const command = `---
 description: Pilot Shipyard into the current repo — plan, build, test, and fix a feature autonomously
-argument-hint: <feature request, or path to a story file in this repo>
+argument-hint: [--lite|--standard|--full] [--budget <tokens>] <feature request, or path to a story file>
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent, TaskCreate, TaskUpdate
 ---
 
 # Shipyard — pilot in
 
 You are the **harbormaster**. Everything you need is in this file; do not try to
-read \`SHIPYARD.md\` or \`agents/*.md\` from disk, because the Shipyard repo is
-outside this session's reach. The role definitions are inlined at the end.
+read \`SHIPYARD.md\` from disk, because the Shipyard repo is outside this session's
+reach.
 
 ## This invocation
 
@@ -61,7 +100,8 @@ standing in it. Do not ask for a path and do not operate on any other repo.
 
 **The feature request is:** \`$ARGUMENTS\`
 
-Interpret it like this:
+First take off any \`--lite\`, \`--standard\` or \`--full\` (the run's size) and any
+\`--budget <tokens>\` (recorded as \`budgetTokens\`). Interpret the rest like this:
 
 - **A path that exists in this repo** (e.g. \`docs/stories/CSV-EXPORT.md\`) — read
   that file; its contents are the feature request. Treat any acceptance criteria
@@ -75,24 +115,25 @@ Before starting, if the request is vague enough that "done" cannot be defined
 without guessing, ask **one** clarifying question. A wrong contract wastes a
 whole cycle.
 
+## Helper scripts and agents
+
+Wherever the manual says \`<shipyard>/tools/<script>\`, run
+\`${SHIPYARD_HOME}/<script>\`. Run these from there and **never copy them into this
+repo**. Do not read them or write your own. If one is missing, stop and tell the
+user to run \`npm run install-command\` in their Shipyard checkout.
+
+The roles are installed as \`shipyard-<role>\` agents. If the Agent tool does not
+know one, this session started before the install: \`cat\` the role from
+\`~/.claude/agents/shipyard-<role>.md\` and pass its body in a \`general-purpose\`
+agent's prompt, with its \`model\`. Tell the tester's copy about its write limits,
+since nothing enforces them there.
+
 ## The live yard view
 
-During preflight, install the renderer into this repo with one command. Do not
-write it by hand and do not read it; just copy it:
+**After every stage transition and every agent you spawn, finish, or lose**, run:
 
 \`\`\`bash
-mkdir -p .shipyard && cp ${SHIPYARD_HOME}/render-report.mjs .shipyard/render-report.mjs
-\`\`\`
-
-If that file is missing, stop and tell the user to run
-\`npm run install-command\` in their Shipyard checkout. Do not improvise a
-renderer.
-
-Then, **after every stage transition and every agent you spawn, finish, or
-lose**, run:
-
-\`\`\`bash
-node .shipyard/render-report.mjs .shipyard/runs/<run-id>
+node ${SHIPYARD_HOME}/render-report.mjs .shipyard/runs/<run-id>
 \`\`\`
 
 It regenerates \`report.html\`. While the run is in flight that page reloads
@@ -110,17 +151,6 @@ Re-rendering is cheap and local. Do it liberally; a stale page is worse than a
 redundant render. Rendering is a single \`node\` call: never read its output
 back into your context beyond the path it prints.
 
-## The Harbor Pilot report
-
-During preflight, install the report writer the same way:
-
-\`\`\`bash
-cp ${SHIPYARD_HOME}/write-shipyard-report.mjs .shipyard/write-shipyard-report.mjs
-\`\`\`
-
-Wherever the manual says to run \`<shipyard>/tools/write-shipyard-report.mjs\`, run
-\`node .shipyard/write-shipyard-report.mjs .shipyard/runs/<run-id>\`.
-
 ## Reporting back
 
 When finished, tell the user: the branch name, the verdict, how many cycles it
@@ -130,20 +160,6 @@ the code out for review. Then stop.
 ---
 
 ${manual}
-
----
-
-# ROLE DEFINITIONS
-
-These are the role files referenced throughout the manual above, inlined. When
-the manual says "spawn an agent with \`agents/dev.md\`", use the **dev** section
-below as that subagent's instructions, give it exactly the tools its
-frontmatter lists, and pass its frontmatter \`model\` (\`opus\` or \`sonnet\`)
-as the Agent tool's \`model\` parameter. The split is deliberate: roles that
-decide (intake, manager, dev, tester) run on opus; roles that read and
-summarise (surveyor, reporter) run on sonnet, which is much faster.
-
-${roles.map(r => `## Role: ${r.name}\n\n\`\`\`markdown\n${r.body}\n\`\`\``).join('\n\n')}
 
 `
 
@@ -209,15 +225,16 @@ writeFileSync(harborOut, harborCommand)
 
 const home = join(homedir(), '.claude', 'shipyard')
 mkdirSync(home, { recursive: true })
-copyFileSync(RENDERER_SRC, join(home, 'render-report.mjs'))
-copyFileSync(join(repo, 'tools', 'write-shipyard-report.mjs'), join(home, 'write-shipyard-report.mjs'))
-copyFileSync(join(repo, 'tools', 'harbor.mjs'), join(home, 'harbor.mjs'))
+for (const helper of HELPERS) copyFileSync(join(repo, 'tools', helper), join(home, helper))
+
+const agentsDir = join(homedir(), '.claude', 'agents')
+mkdirSync(agentsDir, { recursive: true })
+for (const role of roles) writeFileSync(join(agentsDir, `shipyard-${role.name}.md`), role.definition)
 
 const kb = (command.length / 1024).toFixed(1)
 console.log(`installed ${out}`)
 console.log(`installed ${harborOut}`)
-console.log(`installed ${join(home, 'render-report.mjs')}`)
-console.log(`installed ${join(home, 'write-shipyard-report.mjs')}`)
-console.log(`installed ${join(home, 'harbor.mjs')}`)
-console.log(`  ${roles.length} roles bundled: ${roles.map(r => r.name).join(', ')}`)
+for (const helper of HELPERS) console.log(`installed ${join(home, helper)}`)
+console.log(`installed ${roles.length} agents in ${agentsDir}: ${roles.map(r => `shipyard-${r.name}`).join(', ')}`)
+console.log('  start a new Claude Code session so it picks up the agents')
 console.log(`  ${kb} KB — /shipyard and /harbor now work from inside any repo`)

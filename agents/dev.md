@@ -14,6 +14,11 @@ Write tests for the acceptance criteria your task serves. Run them. You may run
 tests to check your own work, but you do NOT decide whether the task is done —
 a tester makes that call. Report honestly: if something does not work, say so.
 
+Read only what your task needs: its description should name the interfaces you
+depend on. Commit your own work, staging only your own files, never `git add -A`,
+because a parallel dev may have half-written work in the tree. Write your full
+report to the path you are given, and return under 150 words.
+
 Standards for all code you write:
 - Database access uses parameterized queries, never string concatenation
 - No credentials or tokens in source; use environment variable placeholders

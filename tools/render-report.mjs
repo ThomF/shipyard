@@ -219,7 +219,8 @@ const verdict = (st.verdict || 'pending').toLowerCase();
 const crit = st.criteria || {};
 const critKeys = Object.keys(crit);
 const statements = {};
-(D.brief?.acceptanceCriteria || []).forEach(c => { statements[c.id] = c.statement; });
+const checks = {};
+(D.brief?.acceptanceCriteria || []).forEach(c => { statements[c.id] = c.statement; checks[c.id] = c.check; });
 const keys = critKeys.length ? critKeys : Object.keys(statements);
 const counts = { pass: 0, fail: 0, untested: 0 };
 keys.forEach(k => { counts[(crit[k] || 'untested')] = (counts[(crit[k] || 'untested')] || 0) + 1; });
@@ -250,6 +251,8 @@ const pipeline = D.stages.filter(s => s !== 'done').map((s, i) => {
 }).join('');
 const quietMs = D.stateMtime ? Date.now() - D.stateMtime : 0;
 const active = Array.isArray(st.active) ? st.active : [];
+const usage = Array.isArray(st.usage) ? st.usage : [];
+const tokenTotal = usage.reduce((sum, u) => sum + (u.tokens ?? 0), 0);
 
 parts.push(\`
 <header>
@@ -259,6 +262,8 @@ parts.push(\`
       ? '<span class="chip verdict live"><span class="dot"></span>WORKING</span>'
       : \`<span class="chip verdict v-\${esc(verdict)}">\${esc(verdict)}</span>\`}
     <span class="chip">RUN <b>\${esc(st.runId || '—')}</b></span>
+    \${st.size ? \`<span class="chip">SIZE <b>\${esc(st.size)}</b></span>\` : ''}
+    \${usage.length ? \`<span class="chip">TOKENS <b>\${tokenTotal.toLocaleString('en-US')}</b></span>\` : ''}
     \${st.startedAt ? \`<span class="chip">ELAPSED <b>\${since(st.startedAt, D.live ? null : st.endedAt)}</b></span>\` : ''}
     \${D.live && active.length ? \`<span class="chip live">CREW <b>\${active.length}</b></span>\` : ''}
     \${D.live ? \`<span class="chip nosignal" id="nosignal" data-mtime="\${D.stateMtime}" style="display:none">NO SIGNAL <b></b></span>\` : ''}
@@ -317,9 +322,32 @@ const bar = \`<div class="bar">
 const cards = keys.length ? keys.map(k => {
   const s = crit[k] || 'untested';
   return \`<div class="crit"><span class="id">\${esc(k)}</span><span class="st \${esc(s)}">\${s === 'pass' ? '◉ PASS' : s === 'fail' ? '✗ FAIL' : '· UNTESTED'}</span>
-    <p>\${esc(statements[k] || '')}</p></div>\`;
+    <p>\${esc(statements[k] || '')}</p>\${checks[k] ? \`<span class="tag">\${esc(checks[k])}</span>\` : ''}</div>\`;
 }).join('') : '<p class="empty">No acceptance criteria recorded — intake did not complete.</p>';
 parts.push(\`<section><h2>Acceptance criteria — \${counts.pass}/\${keys.length || 0} pass</h2><div class="body">\${keys.length ? bar : ''}<div class="grid">\${cards}</div></div></section>\`);
+
+// Token use. The figures come straight from state.json's usage list.
+if (usage.length) {
+  const byRole = {};
+  usage.forEach(u => {
+    const r = byRole[u.role] || (byRole[u.role] = { agents: 0, tokens: 0 });
+    r.agents++;
+    r.tokens += u.tokens ?? 0;
+  });
+  const fmt = n => Number(n).toLocaleString('en-US');
+  const roleRows = Object.entries(byRole).sort((a, b) => b[1].tokens - a[1].tokens).map(([role, r]) =>
+    \`<tr><td><b>\${esc(role)}</b></td><td class="num">\${r.agents}</td><td class="num">\${fmt(r.tokens)}</td><td class="num">\${tokenTotal ? Math.round(r.tokens / tokenTotal * 100) : 0}%</td></tr>\`).join('');
+  const agentRows = usage.map(u =>
+    \`<tr><td class="mono">\${esc(u.agent)}\${u.fixOf ? ' (fix of ' + esc(u.fixOf) + ')' : ''}</td><td>\${esc(u.role)}</td><td>\${esc(u.model || '—')}</td><td class="num">\${u.tokens == null ? 'unavailable' : fmt(u.tokens)}</td><td class="num">\${u.toolUses ?? '—'}</td></tr>\`).join('');
+  const unknown = usage.filter(u => u.tokens == null).length;
+  const hasHarbormaster = usage.some(u => u.role === 'harbormaster');
+  parts.push(\`<section><h2>Token use — \${fmt(tokenTotal)} reported</h2><div class="body">
+    <table><thead><tr><th>Role</th><th style="text-align:right">Agents</th><th style="text-align:right">Tokens</th><th style="text-align:right">Share</th></tr></thead><tbody>\${roleRows}</tbody></table>
+    \${hasHarbormaster ? '' : "<p class=\\"empty\\">The harbormaster's own tokens are not included: no figure was available.</p>"}
+    \${unknown ? '<p class="empty">' + unknown + ' agent(s) reported no figure and count as 0, so the real total is higher.</p>' : ''}
+    <details><summary>Per agent</summary><div class="inner"><table><thead><tr><th>Agent</th><th>Role</th><th>Model</th><th style="text-align:right">Tokens</th><th style="text-align:right">Tool uses</th></tr></thead><tbody>\${agentRows}</tbody></table></div></details>
+  </div></section>\`);
+}
 
 // Cycles
 (D.cycles || []).forEach(c => {
@@ -327,7 +355,7 @@ parts.push(\`<section><h2>Acceptance criteria — \${counts.pass}/\${keys.length
   const taskState = st.tasks || {};
   const rows = tasks.length ? tasks.map(t => {
     const s = taskState[t.id] || 'todo';
-    return \`<tr><td><b>\${esc(t.id)}</b></td><td>\${esc(t.goal)}</td>
+    return \`<tr><td><b>\${esc(t.id)}</b></td><td>\${esc(t.goal)}\${t.model ? \` <span class="tag">\${esc(t.model)}</span>\` : ''}</td>
       <td class="mono">\${esc((t.ownsFiles || []).join(', '))}</td>
       <td class="mono">\${esc((t.dependsOn || []).join(', ') || '—')}</td>
       <td><span class="tag t-\${esc(s)}">\${esc(s)}</span></td></tr>\`;

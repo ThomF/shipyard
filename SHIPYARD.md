@@ -18,16 +18,18 @@ degraded harbormaster makes bad delegation decisions for the rest of the run.
 
 So:
 
-- Every subagent writes its full output to a **file** and returns **under 150
-  words** to you.
+- Devs and testers write their full output to a **file** and return **under 150
+  words** to you. Intake, surveyors, the manager and the reporter have no write
+  tools: each returns its artifact as its final message and you save it as is.
+  Never ask them to write a file, and do not re-read what you saved.
 - You never read an agent transcript back into a prompt.
 - Your durable memory is `state.json` and `ledger.md` on disk, not this
   conversation. If you lose context, you read those files and continue.
 - When you need to brief a fresh agent, you build its prompt from the artifacts,
   not from your recollection.
 
-You delegate **one level down**. Subagents never spawn subagents — tell them so
-explicitly in every dispatch.
+You delegate **one level down**. Subagents never spawn subagents; their tool lists
+do not allow it.
 
 ---
 
@@ -41,32 +43,66 @@ record in the ledger which fast path you took so the report can show it.
   agents in the background and react to each as it finishes.
 - **Never redo work whose inputs did not change.** The survey is cached across
   runs; a passing criterion stays passing unless the regression run breaks.
-- **Use the model the role file names.** Surveyors and the reporter run on
-  sonnet because they read and summarise; do not upgrade them.
 - **Keep prompts small.** A dev gets its task, not the plan; a tester in a fix
   round gets the criteria still failing, not all of them.
 
 ---
 
+## The third rule: tokens are finite
+
+A run can use up a plan's allowance. Agents starting cold are the largest cost,
+so the number of tasks and criteria drives the bill. Never spend an agent on what
+a command can tell you, and record what every agent used.
+
+**Record each agent the moment it returns or dies**, from its completion
+notification:
+
+```bash
+node <shipyard>/tools/run-check.mjs record <run-dir> --agent dev-T1 --role dev --model sonnet --tokens 1234 --tools 12 --ms 45000
+```
+
+Add `--fix-of T1` for a fix agent. Leave out any figure the notification did not
+give; it is stored as null. **Never estimate one.**
+
+**Budget.** `record` prints the running total. A run has a budget only when the
+request sets one with `--budget <tokens>`, stored as `budgetTokens`. When `record`
+prints `OVER BUDGET`: let running agents finish, dispatch no new ones, and ask the
+owner whether to continue or stop and report what is done. Say that the count
+covers this run's agents, not the account's usage meter, which you cannot see. On
+stop, go to **Report** with verdict `partial`.
+
+---
+
 ## Roles
 
-Six role definitions live in `agents/`. Each is a system prompt with frontmatter
-declaring its model and tool list. **Read the role file and pass its body to the
-subagent as its instructions.** Do not paraphrase them.
+Six roles are installed as agents named `shipyard-<role>`. Each carries its own
+instructions and tool limits, so **dispatch with that `subagent_type` and put only
+the task in the prompt**. Do not paste or paraphrase role text.
 
-| Role | File | Tools | Can write code |
-|---|---|---|---|
-| Intake | `agents/intake.md` | Read, Grep, Glob | no |
-| Surveyor | `agents/surveyor.md` | Read, Grep, Glob | no |
-| Manager | `agents/manager.md` | Read, Grep, Glob | no |
-| Dev | `agents/dev.md` | Read, Grep, Glob, Write, Edit, Bash | **yes** |
-| Tester | `agents/tester.md` | Read, Grep, Glob, Bash | no |
-| Reporter | `agents/reporter.md` | Read, Grep, Glob | no |
+| Role | Agent | Tools | Writes | Default model |
+|---|---|---|---|---|
+| Intake | `shipyard-intake` | Read, Grep, Glob | nothing | opus |
+| Surveyor | `shipyard-surveyor` | Read, Grep, Glob | nothing | sonnet |
+| Manager | `shipyard-manager` | Read, Grep, Glob | nothing | opus |
+| Dev | `shipyard-dev` | Read, Grep, Glob, Write, Edit, Bash | **code** and its report | opus |
+| Tester | `shipyard-tester` | Read, Grep, Glob, Bash, browser | test reports and checks only | opus |
+| Reporter | `shipyard-reporter` | Read, Grep, Glob | nothing | sonnet |
+
+**Choosing a model.** Pass the Agent tool's `model` when it differs from the
+default:
+
+- A dev uses its plan task's `model`: sonnet for docs, config, contracts, API
+  clients and other mechanical work; opus for design-heavy or cross-cutting work.
+- A task whose sonnet dev fails or dies once goes to opus from then on.
+- A tester following a checklist or a script runs on sonnet. The exploratory pass
+  runs on opus.
 
 **Separation of duties is not optional.** A tester reports defects; it does not
-fix them. Dispatch testers without write tools. After a tester runs, verify it
-did not modify the tree — a tester has `Bash` and could technically write, so
-check `git status` and fail the run if it did.
+fix them. A tester writes only inside `.shipyard/`: its test report, and the
+browser check script described under **Test**. After a tester runs, verify it did
+not modify the tree — it has `Bash` and could technically write elsewhere, so run
+`git status --porcelain -- . ':(exclude).shipyard'` and fail the run if it lists
+anything.
 
 Only devs write code. The manager decides and never touches files.
 
@@ -103,6 +139,27 @@ Only devs write code. The manager decides and never touches files.
    about this branch and travels with it.
 4. If `.shipyard/PROJECT-REPORT.md` exists, read it. It records prior runs
    against this target. Do not re-attempt an approach it records as failed.
+5. Choose the run's size, below, and record it as `size` in `state.json`.
+
+### Run size
+
+| Size | Use for | Intake | Survey | Manager | Devs | Criteria |
+|---|---|---|---|---|---|---|
+| `lite` | One page, endpoint or fix; under about 5 files | You write the brief | Cache, or one surveyor | None | 1-2 | 8 |
+| `standard` | A normal feature | Agent | Cache or full | Agent | 3-5 | 12 |
+| `full` | Must be asked for by name | Agent | Cache or full | Agent | Up to 10 | 30 |
+
+- The request can name a size with `--lite`, `--standard` or `--full`.
+- Otherwise pick `lite` or `standard`, and state your choice and why in your first
+  message. Default to `standard` when unsure.
+- **Never pick `full` yourself.** If a request looks that large, ask once, and offer
+  to split the work.
+- A `lite` surveyor covers `relevant` and `tests`, because every later verdict needs
+  the test command. You write `brief.json`, `plan.json` and `spec.md` yourself, and
+  fix rounds use **direct fix**.
+- If `lite` proves too small (it needs a third task, or a fix round needs the
+  manager), move up to `standard` once and log it in `plan_changes`. Never move up
+  to `full` without asking.
 
 ---
 
@@ -127,6 +184,7 @@ Only devs write code. The manager decides and never touches files.
       test-report.json       tester verdict
       defects.json           triaged defects
     agents/<agent-id>.md     full subagent reports — write-only
+  checks/browser.mjs         the browser check script, once one exists
 ```
 
 `report-notes.json` holds the two things no other artifact records. Create it in
@@ -135,7 +193,8 @@ preflight and add to it as they happen, not from memory at the end:
 ```json
 {
   "plan_changes": [ { "change": "", "why": "" } ],
-  "notes": [ "" ]
+  "notes": [ "" ],
+  "observations": [ { "what": "", "severity": "low|medium|high" } ]
 }
 ```
 
@@ -144,6 +203,9 @@ preflight and add to it as they happen, not from memory at the end:
   restart, a criterion dropped or added.
 - `notes` — anything an agent said it was unsure about, or a shortcut it took.
   Copy these from what devs and testers return to you.
+- `observations` — defects or rough edges an agent saw outside the criteria. The
+  report lists them for the owner to choose from; they do not become fix tasks
+  unless high severity.
 
 Empty arrays are a valid answer. A missing file is not.
 
@@ -152,6 +214,7 @@ Empty arrays are a valid answer. A missing file is not.
 ```json
 {
   "runId": "", "target": "", "request": "", "branch": "",
+  "size": "lite|standard|full", "budgetTokens": null,
   "stage": "intake|survey|plan|build|test|fix|report|done",
   "cycle": 1, "maxCycles": 3,
   "fixRound": 0, "maxFixRounds": 3,
@@ -161,7 +224,8 @@ Empty arrays are a valid answer. A missing file is not.
   "baseCommit": "", "startedAt": "<ISO time>", "endedAt": null,
   "stageTimes": { "intake": { "start": "<ISO>", "end": "<ISO>" } },
   "active": [ { "id": "dev-T1", "role": "dev", "task": "T1", "since": "<ISO>" } ],
-  "fastPaths": [ "survey-cache" ]
+  "fastPaths": [ "survey-cache" ],
+  "usage": [ { "agent": "dev-T1", "role": "dev", "model": "sonnet", "tokens": 1234, "toolUses": 12, "durationMs": 45000 } ]
 }
 ```
 
@@ -187,20 +251,42 @@ Use real timestamps from `date -u +%Y-%m-%dT%H:%M:%SZ`, never invented ones.
 
 ### 1. Intake
 
-Spawn one intake agent with `agents/intake.md`. Give it the feature request and
+Spawn one intake agent. Give it the feature request and
 the project report if one exists. It returns a brief: goal, constraints,
 assumptions, risks, and **acceptance criteria**.
 
-Each criterion must be checkable by a tester without judgement. Reject the brief
-and re-dispatch if every criterion is unverifiable or if ids are duplicated — a
-vague contract makes every later stage meaningless.
+Each criterion must be checkable by a tester without judgement, and tagged with
+how it is checked. `brief.json` has this shape:
+
+```json
+{ "goal": "", "constraints": [], "assumptions": [], "risks": [],
+  "acceptanceCriteria": [ { "id": "AC1", "statement": "", "check": "unit|api|command|browser" } ] }
+```
+
+- `unit`, `api`, `command` — a named test or command can really prove it.
+- `browser` — only for what tests cannot show: whether a real click lands, layout
+  at a given width, an end-to-end flow. Group checks that can share a pass. Cap: 3
+  at `standard`, 1 at `lite`.
+
+A tag must not lower the bar. "Clicking a card opens it" stays `browser` unless a
+component test can truly prove that a click anywhere on the card lands.
+
+Tell the intake agent the run's size and caps. Write `brief.json`, then run:
+
+```bash
+node <shipyard>/tools/run-check.mjs brief <run-dir>
+```
+
+If it rejects the brief, re-dispatch with its message, up to 3 attempts. Also
+reject a brief whose criteria are all unverifiable — a vague contract makes every
+later stage meaningless. If the request truly needs more criteria than the cap,
+ask the owner whether to split it or run it as `full`.
 
 **Fast path: a story that already is a contract.** When the request is a file
 that already states a goal and numbered acceptance criteria that meet the bar
 above, write `brief.json` from it directly instead of spawning intake, and
-record `intake-from-story` in `fastPaths`. Add any assumptions you had to make.
-
-Write `brief.json`.
+record `intake-from-story` in `fastPaths`. Add any assumptions you had to make,
+tag each criterion, and run the same check.
 
 ### 2. Survey
 
@@ -261,21 +347,25 @@ long it took: it bounds how fast every fix round can be.
 
 ### 3. Plan
 
-Spawn a manager with `agents/manager.md`. Give it the brief, the codebase map,
-and — on cycles 2 and 3 — the accumulated learnings. It returns a task DAG and a
-spec page.
+Spawn a manager. Give it the brief, the path of the codebase map, the run's size
+with its task cap, and — on cycles 2 and 3 — the accumulated learnings. It returns
+a task DAG and a spec page. `plan.json` has this shape:
 
-**Validate the plan before accepting it.** Reject and re-prompt with the specific
-problem, up to 3 attempts:
+```json
+{ "summary": "", "tasks": [ { "id": "T1", "goal": "", "description": "",
+    "ownsFiles": [], "dependsOn": [], "criteriaIds": [], "model": "sonnet|opus" } ] }
+```
 
-- Every acceptance criterion must be served by at least one task
-- Task ids unique; dependencies must reference real tasks; no cycles
-- **Two tasks that can run concurrently must not own the same file.** Two tasks
-  sharing a file are fine when one depends on the other, because they run in
-  sequence. The check is whether they are *ordered* by the dependency graph,
-  including transitively — not merely whether they share a file.
+Write `plan.json` and `spec.md`, then **validate the plan before accepting it**:
 
-Write `plan.json` and `spec.md`.
+```bash
+node <shipyard>/tools/run-check.mjs plan <run-dir>
+```
+
+It checks the task cap, that every criterion is served, that ids and dependencies
+are sound, and that **no two tasks that can run concurrently own the same file**
+(tasks ordered by the dependency graph may share one). If it rejects the plan,
+re-prompt with its message, up to 3 attempts.
 
 ### 4. Build
 
@@ -290,44 +380,56 @@ and handle each one as it returns: mark its task done, re-render, and
 immediately dispatch any task that just became ready. Waiting for a whole wave
 to finish lets the slowest dev hold up work that was already unblocked.
 
-Each dev gets: its task, the acceptance criteria it serves, the files it owns,
-the codebase map, and nothing else. Not the full plan, not other devs' reports.
-
-Tell every dev explicitly:
-- Modify only the files you own. If the task needs a file you do not own, stop
-  and report a blocker rather than touching it.
-- Write tests for the criteria your task serves.
-- You do not decide whether the task is done — a tester does.
-- Report honestly; if something does not work, say so.
-- Write your full report to `agents/<id>.md`; return under 150 words.
-- Do not dispatch subagents.
-
-Devs commit their own work to the branch, staging **only their own files** —
-never `git add -A`, which would stage a parallel dev's half-written work.
+Each dev's prompt holds its task, the acceptance criteria it serves, the files it
+owns, the test command, the path of the codebase map, and the path for its report.
+Nothing else: not the full plan, not other devs' reports, and no restating of its
+role, which already covers file ownership, tests, commits and honest reporting.
 
 Write `tasks/<task-id>.json` per dev.
 
 ### 5. Test
 
-Spawn a tester with `agents/tester.md`, **without write or edit tools**. Give it
-the acceptance criteria and the test command from the codebase map.
+Spawn a tester. Give it the acceptance criteria with their `check` tags, the test
+command from the codebase map, and the path for its report.
 
-It returns a verdict per criterion — pass, fail, or untested — with the actual
-command output as evidence. A criterion it could not test is `untested`, not
-`pass`. A test that passes trivially because it asserts nothing is a fail.
+It returns a verdict per criterion — pass, fail, or untested — with evidence. A
+criterion it could not test is `untested`, not `pass`. A test that passes trivially
+because it asserts nothing is a fail.
 
-Then **verify the tester did not modify the tree**: run `git status` in the
-target. If it is dirty, the tester wrote something it should not have. Revert
+- **`unit`, `api`, `command`:** it confirms a named test exists and truly asserts
+  the behaviour, then relies on the test command's result. Evidence names the test.
+  It starts no browser.
+- **`browser`:** the first tester to need one writes `.shipyard/checks/browser.mjs`,
+  one Playwright script covering every browser criterion, and runs it as a command
+  with output to a file. If it already exists, it extends and runs that. It starts
+  the app itself on a non-default port against a temp copy of the data, **never the
+  owner's data**, and prints `PASS <id>` or `FAIL <id>` per criterion. Agent-driven
+  browser use is only for investigating a script failure.
+
+**Before the first test stage, if any criterion is `browser` and the target has no
+Playwright, ask the owner once** whether to add it as a dev dependency. It is
+Apache-2.0, and a dev adds and reports it under the dependency-license rule. If the
+owner declines, testers drive the browser directly, within the 25-call limit below.
+
+**One exploratory pass per run, at most.** A script checks only what it was told to,
+so when the run has a browser criterion and a user-visible change, dispatch one
+separate tester on opus once the first test pass is done: at most 25 browser tool
+calls, using the app as a user would, reporting what it saw. What it finds outside
+the criteria goes to `observations`.
+
+Then **verify the tester did not modify the tree**, with the `git status` command
+under **Roles**. If it lists anything, the tester wrote something it should not have. Revert
 the changes, record it in the ledger, and treat the run as compromised — this is
 the check that makes separation of duties real rather than advisory.
 
 Write `test-report.json`. If every criterion passes, go to **Report**.
 
-**Fast path for re-tests.** In a fix round, the tester re-verifies only the
-criteria that are not yet `pass`, plus one run of the full test command as a
-regression guard. If the regression run is green, criteria that passed before
-stay `pass`. If it goes red, every criterion is back in scope for that round.
-Record `scoped-retest` in `fastPaths` when you take this path.
+**Re-tests are scoped.** Before a re-test, run the full test command yourself,
+output to a file; you need only the exit code and the last few lines. If it is
+green, criteria that passed stay `pass`, and the tester's dispatch lists **only the
+failing criteria**, re-running `checks/browser.mjs` for any that are `browser`. If
+it goes red, every criterion is back in scope for that round. Record `scoped-retest`
+in `fastPaths`.
 
 ### 6. Triage and fix
 
@@ -341,6 +443,11 @@ owned by exactly one completed task, and the tester's evidence names the cause
 yourself from that task and the evidence, assign it the same files, and
 dispatch a dev. Record `direct-fix` in `fastPaths`. If the same criterion fails
 again, the next round goes through the manager.
+
+**A fix round fixes failing criteria only.** Do not add observations to it, however
+easy they look: that widens both the fix and the re-test. Put them in `observations`
+for the owner. The one exception is a high-severity observation, such as data loss
+or a security hole; log it in `plan_changes`.
 
 Dispatch devs on the fix tasks. Each fix task carries an `attempts` list
 summarising what previous rounds tried and why it failed, so the system does not
@@ -363,10 +470,15 @@ plan.
 
 ### 8. Report
 
-Spawn a reporter with `agents/reporter.md`. It writes `report.md`: verdict, what
-was asked, acceptance criteria table, what was built, test results with real
-failure output, what went wrong and why, what each cycle learned, and
-recommended next steps.
+Spawn a reporter. It returns the text of `report.md`: verdict, what was asked,
+acceptance criteria table, what was built, test results with real failure output,
+what went wrong and why, what each cycle learned, `observations` for the owner to
+choose from, and recommended next steps. Save that text as `report.md`, then add
+the token figures:
+
+```bash
+node <shipyard>/tools/run-check.mjs usage <run-dir> >> <run-dir>/report.md
+```
 
 A failed run must explain itself well enough that the user can decide what to
 change about the request.
@@ -388,7 +500,9 @@ If it stops because `report-notes.json` is missing, write that file honestly and
 run it again. Do not hand-write `shipyard-report.json`.
 
 Append one entry to `.shipyard/PROJECT-REPORT.md`, including the run's total
-wall-clock time and the slowest stage. Commit everything to the branch. Tell the user the branch name and the path to `report.html`, and that running `/harbor` on this branch lays the code out for review.
+wall-clock time, the slowest stage, and the line printed by
+`run-check.mjs usage <run-dir> --line`. Commit everything to the branch, and confirm `git status --porcelain` is
+empty. Tell the user the branch name and the path to `report.html`, and that running `/harbor` on this branch lays the code out for review.
 
 **Do not merge, do not push.** The branch is for them to review.
 
@@ -401,6 +515,9 @@ is **dead**. Death is routine, not an emergency.
 
 Re-dispatch it on the same task with a handoff note. Its partial work is still
 in the tree, so `git diff` is the handoff — no state is lost.
+
+If the harness refused only an agent's write to a report file, it is not dead: take
+the text from its final message and save it yourself.
 
 **Two respawns per task.** A third death marks the task `blocked` and escalates
 it to the manager at the next triage rather than retrying forever.
