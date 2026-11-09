@@ -18,8 +18,8 @@ degraded harbormaster makes bad delegation decisions for the rest of the run.
 
 So:
 
-- Devs and testers write their full output to a **file** and return **under 150
-  words** to you. Intake, surveyors, the manager and the reporter have no write
+- Devs commit their work and testers write a test report, and both return **under
+  150 words** to you. Intake, surveyors, the manager and the reporter have no write
   tools: each returns its artifact as its final message and you save it as is.
   Never ask them to write a file, and do not re-read what you saved.
 - You never read an agent transcript back into a prompt.
@@ -75,7 +75,7 @@ stop, go to **Report** with verdict `partial`.
 
 ## Roles
 
-Six roles are installed as agents named `shipyard-<role>`. Each carries its own
+Seven roles are installed as agents named `shipyard-<role>`. Each carries its own
 instructions and tool limits, so **dispatch with that `subagent_type` and put only
 the task in the prompt**. Do not paste or paraphrase role text.
 
@@ -84,8 +84,9 @@ the task in the prompt**. Do not paste or paraphrase role text.
 | Intake | `shipyard-intake` | Read, Grep, Glob | nothing | opus |
 | Surveyor | `shipyard-surveyor` | Read, Grep, Glob | nothing | sonnet |
 | Manager | `shipyard-manager` | Read, Grep, Glob | nothing | opus |
-| Dev | `shipyard-dev` | Read, Grep, Glob, Write, Edit, Bash | **code** and its report | opus |
-| Tester | `shipyard-tester` | Read, Grep, Glob, Bash, browser | test reports and checks only | opus |
+| Dev | `shipyard-dev` | Read, Grep, Glob, Write, Edit, Bash | **code** | opus |
+| Tester | `shipyard-tester` | Read, Grep, Glob, Bash | test reports; a check on re-test | sonnet |
+| Browser tester | `shipyard-browser-tester` | all but Write, Edit, Agent | test reports and checks | opus |
 | Reporter | `shipyard-reporter` | Read, Grep, Glob | nothing | sonnet |
 
 **Choosing a model.** Pass the Agent tool's `model` when it differs from the
@@ -94,12 +95,10 @@ default:
 - A dev uses its plan task's `model`: sonnet for docs, config, contracts, API
   clients and other mechanical work; opus for design-heavy or cross-cutting work.
 - A task whose sonnet dev fails or dies once goes to opus from then on.
-- The checklist tester and any re-test tester run on sonnet. The browser tester
-  runs on opus.
 
 **Separation of duties is not optional.** A tester reports defects; it does not
 fix them. A tester writes only inside `.shipyard/`: its test report, and the
-browser check script described under **Test**. After a tester runs, verify it did
+browser checks described under **Test**. After a tester runs, verify it did
 not modify the tree — it has `Bash` and could technically write elsewhere, so run
 `git status --porcelain -- . ':(exclude).shipyard'` and fail the run if it lists
 anything.
@@ -121,12 +120,9 @@ Only devs write code. The manager decides and never touches files.
    where `<slug>` is 3-5 words from the request and `<run-id>` is a UTC
    timestamp like `2026-10-02T14-30-00`.
 
-   **Do not create a git worktree.** Isolation sounds safer, but it puts the
-   work in a directory the user is not looking at — their dev server watches
-   the working copy, so a worktree means they cannot see anything being built
-   until it is over. Branching in place lets them keep `npm run dev` running
-   and watch the feature appear as agents write files. That live feedback is
-   worth more here than isolation, and the branch already protects `main`.
+   **Do not create a git worktree.** The user's dev server watches this working copy,
+   so branching in place lets them watch the feature appear as agents write files,
+   and the branch already protects `main`.
 
    Tell the user which branch you created and that their working copy is now on
    it, so nothing about the switch is a surprise.
@@ -185,8 +181,8 @@ Only devs write code. The manager decides and never touches files.
       test-report-browser.json   browser tester's verdicts
       test-report-fix<n>.json    re-test verdicts for fix round n
       defects.json           triaged defects
-    agents/<agent-id>.md     full subagent reports — write-only
-  checks/browser.mjs         the browser check script, once one exists
+  checks/lib.mjs             helpers shared by browser checks
+  checks/<feature>.check.mjs one browser check per feature
 ```
 
 `report-notes.json` holds the two things no other artifact records. Create it in
@@ -308,14 +304,17 @@ of these hold:
 
 - the cache exists and its `commit` is an ancestor of `HEAD`
 - `git diff --name-only <commit> HEAD` lists fewer than 30 files
-- none of those files is a manifest, lockfile, build config, test config, or
-  CI file (`package.json`, `*.lock`, `go.mod`, `pyproject.toml`, `Cargo.toml`,
-  `tsconfig*.json`, `vite*`/`vitest*`/`jest*`/`playwright*` configs,
-  `.github/`, `Makefile`, `Dockerfile`)
 
 When it holds, dispatch **only** the `relevant` surveyor (the one concern that
 depends on this request), merge its result into a copy of the cached map, and
 record `survey-cache` in `fastPaths`. This turns a five-agent stage into one.
+
+The exception is a changed manifest, lockfile, build config, test config or CI file
+(`package.json`, `package-lock.json`, `*.lock`, `go.mod`, `pyproject.toml`,
+`Cargo.toml`, `tsconfig*.json`, `vite*`/`vitest*`/`jest*`/`playwright*` configs,
+`.github/`, `Makefile`, `Dockerfile`). Those can change how the project builds and
+tests but not its conventions or docs, so dispatch `structure + tests` as well, keep
+the cached conventions and documentation, and record `survey-partial`.
 
 **Otherwise run a full survey.** Split by concern, not by directory, so cost
 does not scale with repository size. The concerns are:
@@ -383,9 +382,9 @@ immediately dispatch any task that just became ready. Waiting for a whole wave
 to finish lets the slowest dev hold up work that was already unblocked.
 
 Each dev's prompt holds its task, the acceptance criteria it serves, the files it
-owns, the test command, the path of the codebase map, and the path for its report.
-Nothing else: not the full plan, not other devs' reports, and no restating of its
-role, which already covers file ownership, tests, commits and honest reporting.
+owns, the test command, and the path of the codebase map. Nothing else: not the full
+plan, not other devs' reports, and no restating of its role, which already covers
+file ownership, tests, commits and honest reporting.
 
 Write `tasks/<task-id>.json` per dev.
 
@@ -397,20 +396,20 @@ returns a verdict per criterion with evidence. A criterion it could not test is
 `untested`, not `pass`. A test that passes trivially because it asserts nothing is
 a fail.
 
-- **Checklist tester, on sonnet**, for `unit`, `api` and `command` criteria. It gets
+- **Checklist tester (`shipyard-tester`)**, for `unit`, `api` and `command` criteria. It gets
   those criteria and the path of the test output. It confirms a named test exists
   and truly asserts the behaviour, then relies on that output, running a command
   only for a `command` criterion. Evidence names the test. It starts no browser. It
   writes `test-report.json`.
-- **Browser tester, on opus**, only when a criterion is `browser`. It gets those
+- **Browser tester (`shipyard-browser-tester`)**, only when a criterion is `browser`. It gets those
   criteria and the list of changed files, and writes `test-report-browser.json`. It
   works in this order:
   1. **Explore first, once per run:** at most 25 browser tool calls, starting from
      the screens the change touches, using the app as a user would.
-  2. **Then script what it learned** in `.shipyard/checks/browser.mjs`, extending the
-     file if it exists. One command covers every browser criterion. The script starts
-     the app itself on a non-default port against a temp copy of the data, **never
-     the owner's data**, and prints `PASS <id>` or `FAIL <id>`. Verdicts come from
+  2. **Then script what it learned** as `.shipyard/checks/<feature>.check.mjs`, one
+     file per feature, so later testers read only what they need. It starts the app
+     itself on a non-default port against a temp copy of the data, **never the
+     owner's data**, and prints `PASS <id>` or `FAIL <id>`. Verdicts come from
      running it. Screenshots go to a temp directory, not the repo.
 
 What the browser tester finds outside the criteria goes to `observations`. **If it
@@ -430,9 +429,10 @@ the check that makes separation of duties real rather than advisory.
 
 If every criterion passes, go to **Report**.
 
-**Re-test by command when you can.** After a fix, run the full test command and any
-`checks/browser.mjs` yourself, with output to files; you need only the exit codes and
-the last few lines. If either goes red, every criterion is back in scope: dispatch
+**Re-test by command when you can.** After a fix, run the full test command, and
+every browser check with `node <shipyard>/tools/run-check.mjs checks <run-dir>
+<output-file>`, yourself, with output to files; you need only the exit codes and the
+last few lines. If either goes red, every criterion is back in scope: dispatch
 the testers again, without exploring. If both are green, criteria that passed stay
 `pass`, and each failing criterion is settled one of two ways:
 
@@ -440,7 +440,7 @@ the testers again, without exploring. If both are green, criteria that passed st
   script's `FAIL <id>`) now passes, and `git diff --name-only <commit before the fix>
   HEAD` shows the fix changed neither that test's file nor `.shipyard/checks/`. Use
   the output line as evidence. Record `command-retest` in `fastPaths`.
-- **By a tester, on sonnet, listing only those criteria**, in every other case: the
+- **By a `shipyard-tester`, listing only those criteria**, in every other case: the
   check itself was too weak, or the fix changed it. Record `scoped-retest` in
   `fastPaths`.
 
@@ -489,8 +489,10 @@ plan.
 Spawn a reporter. It returns the text of `report.md`: verdict, what was asked,
 acceptance criteria table, what was built, test results with real failure output,
 what went wrong and why, what each cycle learned, `observations` for the owner to
-choose from, and recommended next steps. Save that text as `report.md`, then add
-the token figures:
+choose from, and recommended next steps. Give it the output of `git diff --stat
+<baseCommit> HEAD` and the paths of `brief.json`, the test reports, `defects.json`,
+`report-notes.json` and `ledger.md`, so it does not go looking. Save its text as
+`report.md`, then add the token figures:
 
 ```bash
 node <shipyard>/tools/run-check.mjs usage <run-dir> >> <run-dir>/report.md

@@ -11,7 +11,8 @@ criteria table with final status, what was built, test results with actual
 failure output, what went wrong and why, and recommended next steps.
 
 Return the report's full text as your final message; the harbormaster saves it.
-Do not try to write a file. List the observations from report-notes.json for the
+Do not try to write a file. Read only the files you are given, and open anything
+else only to quote a real failure. List the observations from report-notes.json for the
 owner to choose from.
 
 A failed run must explain itself well enough that the reader can decide what to

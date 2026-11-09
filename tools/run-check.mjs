@@ -10,6 +10,7 @@
 //                                               add one agent to state.json's usage
 //   node run-check.mjs usage <run-dir> [--line] print the usage section for report.md,
 //                                               or one line for PROJECT-REPORT.md
+//   node run-check.mjs checks <run-dir> <file>  run every browser check, output to file
 //
 // brief and plan exit 1 and list every problem when the artifact is rejected.
 //
@@ -18,8 +19,9 @@
 //
 // No dependencies: this file is copied into ~/.claude/shipyard and run from there.
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 
 const SIZES = {
   lite: { criteria: 8, browser: 1, tasks: 2 },
@@ -302,12 +304,45 @@ function usageReport(runDir, args) {
   console.log(out.join('\n'))
 }
 
+/**
+ * Runs every browser check from the repo root. Only the summary goes to stdout, so
+ * the harbormaster's context stays small. browser.mjs is the older single-file form.
+ */
+function runChecks(runDir, outFile) {
+  if (!outFile) die('checks needs an output file')
+  const repo = resolve(runDir, '..', '..', '..')
+  const dir = join(repo, '.shipyard', 'checks')
+  const files = existsSync(dir)
+    ? readdirSync(dir).filter(f => f.endsWith('.check.mjs') || f === 'browser.mjs').sort()
+    : []
+  writeFileSync(outFile, '')
+  if (files.length === 0) {
+    console.log('no browser checks')
+    return
+  }
+  let failed = 0
+  for (const f of files) {
+    const r = spawnSync('node', [join(dir, f)], { cwd: repo, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 })
+    const output = `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? r.error.message : ''}`
+    appendFileSync(outFile, `== ${f}\n${output}\n`)
+    if (r.status === 0) {
+      console.log(`ok ${f}`)
+    } else {
+      failed++
+      const fails = output.split('\n').filter(l => l.startsWith('FAIL ')).slice(0, 10)
+      console.log(`FAILED ${f}${fails.length ? `: ${fails.join(', ')}` : ''}`)
+    }
+  }
+  if (failed > 0) process.exit(1)
+}
+
 const [command, runDir, ...rest] = process.argv.slice(2)
-if (!command || !runDir) die('usage: run-check.mjs brief|plan|record|usage <run-dir> [...]')
+if (!command || !runDir) die('usage: run-check.mjs brief|plan|record|usage|checks <run-dir> [...]')
 if (!existsSync(runDir)) die(`no such run directory: ${runDir}`)
 
 if (command === 'brief') checkBrief(runDir)
 else if (command === 'plan') checkPlan(runDir, rest[0])
 else if (command === 'record') record(runDir, rest)
 else if (command === 'usage') usageReport(runDir, rest)
+else if (command === 'checks') runChecks(runDir, rest[0])
 else die(`unknown command ${command} in ${basename(process.argv[1])}`)

@@ -16,8 +16,9 @@ a tester makes that call. Report honestly: if something does not work, say so.
 
 Read only what your task needs: its description should name the interfaces you
 depend on. Commit your own work, staging only your own files, never `git add -A`,
-because a parallel dev may have half-written work in the tree. Write your full
-report to the path you are given, and return under 150 words.
+because a parallel dev may have half-written work in the tree. Your commit
+records the work, so write no report file: your final message is your report, under
+150 words, including anything you are unsure about or that does not work.
 
 Standards for all code you write:
 - Database access uses parameterized queries, never string concatenation

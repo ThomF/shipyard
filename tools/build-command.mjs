@@ -36,6 +36,7 @@ const HELPERS = ['render-report.mjs', 'write-shipyard-report.mjs', 'run-check.mj
 const SHIPYARD_HOME = '~/.claude/shipyard'
 
 const ROLE_DESCRIPTIONS = {
+  'browser-tester': 'Shipyard browser tester: uses the app, then scripts what it learned; fixes nothing',
   dev: 'Shipyard developer: builds one task, touching only the files it owns',
   intake: 'Shipyard intake: turns a request into a contract of acceptance criteria',
   manager: 'Shipyard manager: decomposes a goal into a task DAG, or triages defects',
@@ -52,9 +53,11 @@ function agentDefinition(name, raw) {
   const description = ROLE_DESCRIPTIONS[name]
   if (!description) throw new Error(`no description for role ${name}: add it to ROLE_DESCRIPTIONS`)
   const tools = (field('tools') ?? '').replace(/^\[|\]$/g, '')
-  // The tester needs browser tools, whose names vary by machine, so it cannot be
-  // given an allowlist. Deny the tools that write or delegate instead.
-  const access = name === 'tester' ? 'disallowedTools: Write, Edit, NotebookEdit, Agent' : `tools: ${tools}`
+  // The browser tester needs browser tools, whose names vary by machine, so it
+  // cannot be given an allowlist. It denies the tools that write or delegate
+  // instead, and pays for loading every tool definition, which is why it is a
+  // separate agent from the tester rather than the one agent for all testing.
+  const access = name === 'browser-tester' ? 'disallowedTools: Write, Edit, NotebookEdit, Agent' : `tools: ${tools}`
   const permissionMode = field('permissionMode')
   return [
     '---',
@@ -125,7 +128,7 @@ user to run \`npm run install-command\` in their Shipyard checkout.
 The roles are installed as \`shipyard-<role>\` agents. If the Agent tool does not
 know one, this session started before the install: \`cat\` the role from
 \`~/.claude/agents/shipyard-<role>.md\` and pass its body in a \`general-purpose\`
-agent's prompt, with its \`model\`. Tell the tester's copy about its write limits,
+agent's prompt, with its \`model\`. Tell a tester's copy about its write limits,
 since nothing enforces them there.
 
 ## The live yard view
@@ -136,20 +139,16 @@ since nothing enforces them there.
 node ${SHIPYARD_HOME}/render-report.mjs .shipyard/runs/<run-id>
 \`\`\`
 
-It regenerates \`report.html\`. While the run is in flight that page reloads
-itself every 4 seconds, so the user keeps one tab open and watches the yard
-work: criteria flipping, tasks completing, crew timers ticking, files changing
-in the working tree, agents dying and respawning. When the run ends it stops
-reloading on its own.
+It regenerates \`report.html\`, which reloads itself every 4 seconds while the run is
+in flight and stops when it ends, so the user can keep one tab open and watch.
 
 Tell the user the path to \`report.html\` **as soon as it first exists**, not at
 the end. Also mention that \`npm run yard\` in their Shipyard checkout gives a
 fully live view at http://localhost:7343 that re-renders on every refresh, so
 it shows files changing even while a dev is mid-task.
 
-Re-rendering is cheap and local. Do it liberally; a stale page is worse than a
-redundant render. Rendering is a single \`node\` call: never read its output
-back into your context beyond the path it prints.
+Rendering is one cheap local \`node\` call, so do it liberally. Never read its output
+beyond the path it prints.
 
 ## Reporting back
 

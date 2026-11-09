@@ -112,6 +112,47 @@ describe('run-check plan', () => {
   })
 })
 
+describe('run-check checks', () => {
+  async function checksIn(files: Record<string, string>) {
+    const repoDir = await mkdtemp(join(tmpdir(), 'shipyard-checks-'))
+    const dir = join(repoDir, '.shipyard', 'runs', 'r1')
+    await mkdir(dir, { recursive: true })
+    await mkdir(join(repoDir, '.shipyard', 'checks'))
+    for (const [name, body] of Object.entries(files)) await writeFile(join(repoDir, '.shipyard', 'checks', name), body)
+    return { dir, out: join(dir, 'out.txt') }
+  }
+
+  it('runs each check and old browser.mjs from the repo root, but not helpers', async () => {
+    const { dir, out } = await checksIn({
+      'a.check.mjs': "console.log('PASS AC1', process.cwd().endsWith('.shipyard') ? 'wrong cwd' : 'root')",
+      'browser.mjs': "console.log('PASS AC2')",
+      'lib.mjs': "throw new Error('helpers are not checks')",
+    })
+    const r = check('checks', dir, out)
+    expect(r.code).toBe(0)
+    expect(r.out).toBe('ok a.check.mjs\nok browser.mjs\n')
+    const saved = await readFile(out, 'utf8')
+    expect(saved).toContain('PASS AC1 root')
+    expect(saved).toContain('PASS AC2')
+  })
+
+  it('reports a failing check by criterion and keeps running the rest', async () => {
+    const { dir, out } = await checksIn({
+      'a.check.mjs': "console.log('FAIL AC1'); process.exit(1)",
+      'b.check.mjs': "console.log('PASS AC2')",
+    })
+    const r = check('checks', dir, out)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('FAILED a.check.mjs: FAIL AC1')
+    expect(r.out).toContain('ok b.check.mjs')
+  })
+
+  it('passes when there are no checks', async () => {
+    const { dir, out } = await checksIn({})
+    expect(check('checks', dir, out)).toMatchObject({ code: 0, out: 'no browser checks\n' })
+  })
+})
+
 describe('run-check usage', () => {
   const add = (dir: string, ...args: string[]) => check('record', dir, ...args)
 

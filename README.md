@@ -50,7 +50,7 @@ npm run install-command
 
 That bundles `SHIPYARD.md` into a self-contained slash command at
 `~/.claude/commands/shipyard.md`, so `/shipyard` works from inside any repository.
-It installs the six roles as agents at `~/.claude/agents/shipyard-<role>.md` and the
+It installs the seven roles as agents at `~/.claude/agents/shipyard-<role>.md` and the
 helper scripts at `~/.claude/shipyard/`, where each run calls them, so nothing is
 copied into your repo. Start a new Claude Code session after installing so it picks
 up the agents.
@@ -191,11 +191,11 @@ Each criterion is tagged `unit`, `api`, `command` or `browser`, and two testers
 split the work. A sonnet tester checks that the named tests truly assert the
 behaviour, and starts no browser. An opus tester handles the `browser` criteria: it
 uses the app first, in at most 25 browser tool calls, then writes what it learned
-into one Playwright script at `.shipyard/checks/browser.mjs`. The script clicks
-several points across each element, because a click that lands at one point proves
+into a Playwright check per feature at `.shipyard/checks/<feature>.check.mjs`. Each
+check clicks several points across each element, because a click that lands at one point proves
 little. Shipyard asks before adding Playwright to a repo.
 
-After a fix, the harbormaster re-runs the tests and the script itself. A tester is
+After a fix, the harbormaster re-runs the tests and the checks itself. A tester is
 needed only if the check was too weak or the fix changed it.
 
 ## Roles are files, not code
@@ -205,7 +205,7 @@ Every role is a markdown file in `agents/` with frontmatter and a system prompt:
 ```markdown
 ---
 name: tester
-model: opus
+model: sonnet
 tools: [Read, Grep, Glob, Bash]
 ---
 You are a tester. You verify acceptance criteria and report a verdict.
@@ -220,7 +220,8 @@ conservative? Change `dev.md`. Want a different model? Change one line (`opus`,
 |---|---|---|---|
 | `manager.md` | opus | no | yes — triages and assigns |
 | `dev.md` | opus (sonnet for mechanical tasks) | **yes** | no |
-| `tester.md` | opus for browser work, sonnet otherwise | no | reports verdict only |
+| `tester.md` | sonnet | no | reports verdict only |
+| `browser-tester.md` | opus | no | reports verdict only |
 | `intake.md` | opus | no | no |
 | `surveyor.md` | sonnet | no | no |
 | `reporter.md` | sonnet | no | no |

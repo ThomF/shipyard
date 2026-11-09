@@ -94,9 +94,16 @@ describe('install', () => {
     expect(await agent('surveyor')).toMatch(/^model: sonnet$/m)
     expect(await agent('reporter')).toMatch(/^tools: Read, Grep, Glob$/m)
 
+    // A plain tester must not load every tool definition: that is ~35k tokens per agent.
     const tester = await agent('tester')
-    expect(tester).toMatch(/^disallowedTools: Write, Edit, NotebookEdit, Agent$/m)
-    expect(tester).not.toMatch(/^tools:/m)
+    expect(tester).toMatch(/^tools: Read, Grep, Glob, Bash$/m)
+    expect(tester).toMatch(/^model: sonnet$/m)
+    expect(tester).not.toMatch(/disallowedTools/)
+
+    const browser = await agent('browser-tester')
+    expect(browser).toMatch(/^disallowedTools: Write, Edit, NotebookEdit, Agent$/m)
+    expect(browser).toMatch(/^model: opus$/m)
+    expect(browser).not.toMatch(/^tools:/m)
 
     expect(await readFile(join(home, '.claude', 'shipyard', 'run-check.mjs'), 'utf8')).toContain('run-check')
   })
@@ -121,9 +128,9 @@ describe('build-command', () => {
   })
 })
 
-describe('the tester role', () => {
+describe('the browser tester role', () => {
   it('carries a click helper that reports every point that did nothing', async () => {
-    const role = await readFile(join(repo, 'agents', 'tester.md'), 'utf8')
+    const role = await readFile(join(repo, 'agents', 'browser-tester.md'), 'utf8')
     const code = /```js\n([\s\S]*?)```/.exec(role)![1]!
     const deadSpots = new Function(`${code}; return deadSpots`)()
 
