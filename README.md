@@ -147,6 +147,10 @@ where it can do so without weakening a check. Each one taken is recorded in
 | `survey-cache` | The codebase map is cached in `.git/shipyard/` and reused when nothing structural changed; only the request-specific surveyor runs |
 | Sized survey | One surveyor for small repos, three for large ones, never five |
 | Rolling build | Each dev is dispatched the moment its dependencies finish, not in waves |
+| Filed handoffs | A dev ends with a short block naming its commit, the test that proves each criterion, and what it built. `run-check.mjs finish` files it, so the tester opens tests instead of searching and the next dev reads interfaces instead of code |
+| Paths, not prompts | The plan check writes each dev's brief, and `start`, `finish` and `verdicts` keep `state.json`, so the harbormaster passes a path and never retypes a task or reads a test report |
+| Early browser tester | The browser tester starts as the build ends, alongside the test suite, not after it |
+| `red-suite-fix` | A suite that goes red after the build goes straight to a fix dev; no tester is spent restating the failure |
 | `scoped-retest` | Fix rounds re-verify only failing criteria, plus one full regression run |
 | `direct-fix` | A first-round defect with clear evidence goes straight to a dev without a manager |
 | `intake-from-story` | A story file that already has testable criteria becomes the brief directly |
@@ -327,7 +331,7 @@ agents/*.md              role definitions — edit these to tune the team
 tools/build-command.mjs  bundles the above into ~/.claude/commands/shipyard.md
 tools/render-report.mjs  run directory → self-contained report.html
 tools/write-shipyard-report.mjs  run directory → the report Harbor Pilot reads
-tools/run-check.mjs      brief and plan checks, and the token ledger
+tools/run-check.mjs      brief and plan checks, agent start/finish, handoffs, verdicts, token ledger
 tools/serve.mjs          the yard server: every run behind one local URL
 tools/yard.mjs           starts the yard server detached, for /shipyard
 HARBOR.md                Harbor Pilot's manual, bundled into ~/.claude/commands/harbor.md

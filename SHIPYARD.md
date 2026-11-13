@@ -22,6 +22,8 @@ So:
   150 words** to you. Intake, surveyors, the manager and the reporter have no write
   tools: each returns its artifact as its final message and you save it as is.
   Never ask them to write a file, and do not re-read what you saved.
+- **Hand over paths, not text.** Never retype an artifact into a prompt, and never
+  open a test report or `handoff.json` yourself: `finish` and `verdicts` read them.
 - You never read an agent transcript back into a prompt.
 - Your durable memory is `state.json` and `ledger.md` on disk, not this
   conversation. If you lose context, you read those files and continue.
@@ -54,19 +56,26 @@ A run can use up a plan's allowance. Agents starting cold are the largest cost,
 so the number of tasks and criteria drives the bill. Never spend an agent on what
 a command can tell you, and record what every agent used.
 
-**Record each agent the moment it returns or dies**, from its completion
-notification:
+**Bracket every agent with two commands.** They keep `active`, `tasks`, `usage` and
+`deaths` in `state.json` and redraw the live view, so you edit none of those by hand:
 
 ```bash
-node <shipyard>/tools/run-check.mjs record <run-dir> --agent dev-T1 --role dev --model sonnet --tokens 1234 --tools 12 --ms 45000
+node <shipyard>/tools/run-check.mjs start <run-dir> --agent dev-T1 --role dev --task T1
+node <shipyard>/tools/run-check.mjs finish <run-dir> --agent dev-T1 --role dev --task T1 --model sonnet --tokens 1234 --tools 12 --ms 45000 --handoff - <<'SHIPYARD_HANDOFF'
+<the dev's final message, as written>
+SHIPYARD_HANDOFF
 ```
 
-Add `--fix-of T1` for a fix agent. Leave out any figure the notification did not
-give; it is stored as null. **Never estimate one.**
+- Run `start` with the dispatch, and `finish` the moment the agent returns or dies,
+  with the figures from its completion notification. Leave out any figure it did not
+  give; it is stored as null. **Never estimate one.**
+- `--task` is for a dev building a plan task; a fix agent takes `--fix-of T1`
+  instead. Only a dev has a handoff to pipe. `--state dead` records a death.
+- Act on what `finish` prints, such as `ready:` and `TREE MODIFIED`.
 
-**Budget.** `record` prints the running total. A run has a budget only when the
-request sets one with `--budget <tokens>`, stored as `budgetTokens`. When `record`
-prints `OVER BUDGET`: let running agents finish, dispatch no new ones, and ask the
+**Budget.** `finish` prints the running total. A run has a budget only when the
+request sets one with `--budget <tokens>`, stored as `budgetTokens`. When it prints
+`OVER BUDGET`: let running agents finish, dispatch no new ones, and ask the
 owner whether to continue or stop and report what is done. Say that the count
 covers this run's agents, not the account's usage meter, which you cannot see. On
 stop, go to **Report** with verdict `partial`.
@@ -98,10 +107,8 @@ default:
 
 **Separation of duties is not optional.** A tester reports defects; it does not
 fix them. A tester writes only inside `.shipyard/`: its test report, and the
-browser checks described under **Test**. After a tester runs, verify it did
-not modify the tree — it has `Bash` and could technically write elsewhere, so run
-`git status --porcelain -- . ':(exclude).shipyard'` and fail the run if it lists
-anything.
+browser checks described under **Test**. It has `Bash` and could write elsewhere, so
+`finish` checks the tree after every tester.
 
 Only devs write code. The manager decides and never touches files.
 
@@ -151,8 +158,8 @@ Only devs write code. The manager decides and never touches files.
 - **Never pick `full` yourself.** If a request looks that large, ask once, and offer
   to split the work.
 - A `lite` surveyor covers `relevant` and `tests`, because every later verdict needs
-  the test command. You write `brief.json`, `plan.json` and `spec.md` yourself, and
-  fix rounds use **direct fix**.
+  the test command. You write `brief.json`, `plan.json` and `spec.md` yourself, run
+  both checks on them, and fix rounds use **direct fix**.
 - If `lite` proves too small (it needs a third task, or a fix round needs the
   manager), move up to `standard` once and log it in `plan_changes`. Never move up
   to `full` without asking.
@@ -176,7 +183,8 @@ Only devs write code. The manager decides and never touches files.
     cycles/<n>/
       spec.md                the manager's written intent for this cycle
       plan.json              task DAG
-      tasks/<task-id>.json   one per dev
+      tasks/<task-id>.json   one brief per dev, written by the plan check
+      handoff.json           what each dev built and which test proves what
       test-report.json       checklist tester's verdicts
       test-report-browser.json   browser tester's verdicts
       test-report-fix<n>.json    re-test verdicts for fix round n
@@ -200,10 +208,10 @@ preflight and add to it as they happen, not from memory at the end:
   or plan: a survey finding that reshaped the work, a manager re-plan, a cycle
   restart, a criterion dropped or added.
 - `notes` — anything an agent said it was unsure about, or a shortcut it took.
-  Copy these from what devs and testers return to you.
-- `observations` — defects or rough edges an agent saw outside the criteria. The
-  report lists them for the owner to choose from; they do not become fix tasks
-  unless high severity.
+  `finish` files a dev's `UNSURE` line here; add the rest yourself.
+- `observations` — defects or rough edges an agent saw outside the criteria, filed
+  by `verdicts`. The report lists them for the owner to choose from; they do not
+  become fix tasks unless high severity.
 
 Empty arrays are a valid answer. A missing file is not.
 
@@ -236,9 +244,8 @@ through these fields:
 - `stageTimes` — stamp `start` when you enter a stage and `end` when you leave
   it. The fix stage may be entered several times; keep the first `start` and
   update `end` each time.
-- `active` — add an entry when you dispatch an agent and remove it when the
-  agent returns or dies. This is what makes the dashboard show who is working
-  and for how long.
+- `active` — kept by `start` and `finish`. This is what makes the dashboard show
+  who is working and for how long.
 - `endedAt` — stamp it when the verdict is final.
 
 Use real timestamps from `date -u +%Y-%m-%dT%H:%M:%SZ`, never invented ones.
@@ -366,7 +373,8 @@ node <shipyard>/tools/run-check.mjs plan <run-dir>
 It checks the task cap, that every criterion is served, that ids and dependencies
 are sound, that no task owns `.shipyard/`, and that **no two concurrent tasks own
 the same file** (ordered tasks may share one). If it rejects the plan,
-re-prompt with its message, up to 3 attempts.
+re-prompt with its message, up to 3 attempts. When it accepts the plan it writes
+each dev's brief to `tasks/<task-id>.json`. Do not write or read these yourself.
 
 ### 4. Build
 
@@ -376,34 +384,40 @@ Walk the DAG. Dispatch devs for tasks whose dependencies are satisfied.
 validation above guarantees this for unordered tasks, so concurrent dispatch is
 safe. Cap concurrency at 4.
 
-**Dispatch on a rolling basis, not in waves.** Launch devs as background agents
-and handle each one as it returns: mark its task done, re-render, and
-immediately dispatch any task that just became ready. Waiting for a whole wave
-to finish lets the slowest dev hold up work that was already unblocked.
+**Dispatch on a rolling basis, not in waves.** Launch devs as background agents.
+As each returns, run `finish` with its message piped in, then dispatch every task
+it lists as `ready:`. Waiting for a whole wave lets the slowest dev hold up work
+that was already unblocked.
 
-Each dev's prompt holds its task, the acceptance criteria it serves, the files it
-owns, the test command, and the path of the codebase map. Nothing else: not the full
-plan, not other devs' reports, and no restating of its role, which already covers
-file ownership, tests, commits and honest reporting.
-
-Write `tasks/<task-id>.json` per dev.
+A dev's whole prompt is one line, `Your task brief is <path>.`, with the path
+`start` printed. The brief holds the task, its criteria, its files, the test
+command, the map's path, and what the tasks before it really built. Add nothing
+else. If a dev returns no `STATUS` block, `finish` saves its message as written; do
+not send it back for one.
 
 ### 5. Test
 
-Run the full test command yourself first, with output to `cycles/<n>/test-output.txt`.
-Then dispatch up to two testers at once. Neither repeats the other's work, and each
-returns a verdict per criterion with evidence. A criterion it could not test is
-`untested`, not `pass`. A test that passes trivially because it asserts nothing is
-a fail.
+When `finish` prints `build complete`, do two things at once: dispatch the browser
+tester, if any criterion is `browser`, and run the full test command yourself with
+output to `cycles/<n>/test-output.txt`. The browser tester is the slowest agent in
+the stage and needs no test output, so it never waits for the suite.
 
-- **Checklist tester (`shipyard-tester`)**, for `unit`, `api` and `command` criteria. It gets
-  those criteria and the path of the test output. It confirms a named test exists
-  and truly asserts the behaviour, then relies on that output, running a command
-  only for a `command` criterion. Evidence names the test. It starts no browser. It
-  writes `test-report.json`.
-- **Browser tester (`shipyard-browser-tester`)**, only when a criterion is `browser`. It gets those
-  criteria and the list of changed files, and writes `test-report-browser.json`. It
-  works in this order:
+**If the suite is red and was green before the build, spend no checklist tester on
+it.** The output names the failure. Send a fix dev to the task that owns the failing
+test, as a **direct fix**, count it as a fix round, and record `red-suite-fix` in
+`fastPaths`. Let the browser tester finish: its check re-tests by command.
+
+Once the suite is green, dispatch the checklist tester. Each tester returns a verdict
+per criterion with evidence. A criterion it could not test is `untested`, not `pass`.
+A test that passes trivially because it asserts nothing is a fail.
+
+- **Checklist tester (`shipyard-tester`)**, for `unit`, `api` and `command` criteria.
+  Its prompt is four paths: `brief.json`, the test output, `cycles/<n>/handoff.json`,
+  where devs named the test for each criterion, and the report to write,
+  `test-report.json`. It starts no browser.
+- **Browser tester (`shipyard-browser-tester`)**, only when a criterion is `browser`.
+  Its prompt is `brief.json`, `handoff.json`, the `baseCommit` and the report to
+  write, `test-report-browser.json`. It works in this order:
   1. **Explore first, once per run:** at most 25 browser tool calls, starting from
      the screens the change touches, using the app as a user would.
   2. **Then script what it learned** as `.shipyard/checks/<feature>.check.mjs`, one
@@ -411,6 +425,16 @@ a fail.
      itself on a non-default port against a temp copy of the data, **never the
      owner's data**, and prints `PASS <id>` or `FAIL <id>`. Verdicts come from
      running it. Screenshots go to a temp directory, not the repo.
+
+**Take the verdicts by command**, once the testers have returned:
+
+```bash
+node <shipyard>/tools/run-check.mjs verdicts <run-dir>
+```
+
+It merges the cycle's test reports into `state.json`, files the observations, and
+prints only what did not pass, with the evidence and the owning task. Run it again
+after each re-test.
 
 What the browser tester finds outside the criteria goes to `observations`. **If it
 shows that a criterion fails in real use, that criterion is `fail`,** even when a
@@ -422,12 +446,10 @@ Apache-2.0, and a dev adds and reports it under the dependency-license rule. If 
 owner declines, the browser tester judges directly within its 25 calls, with no
 script, and every re-test of a browser criterion needs a tester.
 
-After each tester, **verify it did not modify the tree**, with the `git status` command
-under **Roles**. If it lists anything, the tester wrote something it should not have. Revert
-the changes, record it in the ledger, and treat the run as compromised — this is
-the check that makes separation of duties real rather than advisory.
+If `finish` prints `TREE MODIFIED`, a tester wrote what it should not have. Revert
+the changes, record it in the ledger, and treat the run as compromised.
 
-If every criterion passes, go to **Report**. Do not re-run a tester's checks: nothing
+If `verdicts` prints `ALL PASS`, go to **Report**. Do not re-run a tester's checks: nothing
 has changed since it ran them.
 
 **Re-test by command when you can.** After a fix, run the full test command, and
@@ -441,24 +463,23 @@ the testers again, without exploring. If both are green, criteria that passed st
   script's `FAIL <id>`) now passes, and `git diff --name-only <commit before the fix>
   HEAD` shows the fix changed neither that test's file nor `.shipyard/checks/`. Use
   the output line as evidence. Record `command-retest` in `fastPaths`.
-- **By a `shipyard-tester`, listing only those criteria**, in every other case: the
+- **By a `shipyard-tester`, given only those criteria ids**, in every other case: the
   check itself was too weak, or the fix changed it. Record `scoped-retest` in
   `fastPaths`.
 
 Round `n`'s verdicts go in `test-report-fix<n>.json`, listing only the criteria it
-settled.
+settled. Write that file yourself for a criterion settled by command.
 
 ### 6. Triage and fix
 
-Spawn a manager with the failing criteria and the tester's evidence. It triages
-them into scoped fix tasks. Write `defects.json`.
+Spawn a manager with the lines `verdicts` printed. It triages them into scoped fix
+tasks. Write `defects.json`.
 
 **Fast path: direct fix.** Skip the manager when all of these hold: this is the
-first fix round for these defects, every failing criterion traces to files
-owned by exactly one completed task, and the tester's evidence names the cause
-(an assertion, a stack trace, a missing export). Then write the fix task
-yourself from that task and the evidence, assign it the same files, and
-dispatch a dev. Record `direct-fix` in `fastPaths`. If the same criterion fails
+first fix round for these defects, `verdicts` printed `one owner each`, and the
+tester's evidence names the cause (an assertion, a stack trace, a missing export).
+Then dispatch a dev with the path of that task's brief, the failing lines from
+`verdicts`, and the instruction to fix only those within the brief's files. Record `direct-fix` in `fastPaths`. If the same criterion fails
 again, the next round goes through the manager.
 
 **A fix round fixes failing criteria only.** Do not add observations to it, however
@@ -532,16 +553,16 @@ empty. Tell the user the branch name and the path to `report.html`, and that run
 An agent that returns nothing usable, errors out, or clearly did not do its job
 is **dead**. Death is routine, not an emergency.
 
-Re-dispatch it on the same task with a handoff note. Its partial work is still
-in the tree, so `git diff` is the handoff — no state is lost.
+Run `finish` with `--state dead`, then re-dispatch it on the same task with a
+handoff note. Its partial work is still in the tree, so `git diff` is the handoff —
+no state is lost.
 
 If the harness refused only an agent's write to a report file, it is not dead: take
 the text from its final message and save it yourself.
 
-**Two respawns per task.** A third death marks the task `blocked` and escalates
-it to the manager at the next triage rather than retrying forever.
-
-Record every death in `state.json` and `ledger.md`.
+**Two respawns per task.** `finish` counts them: a third death marks the task
+`blocked`, and it goes to the manager at the next triage rather than retrying
+forever. Record every death in `ledger.md`.
 
 If **you** lose context mid-run, that is also routine: read `state.json` and
 `ledger.md`, rebuild your picture from the artifacts, and continue from `stage`.

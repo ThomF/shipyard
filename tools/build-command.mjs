@@ -133,7 +133,8 @@ since nothing enforces them there.
 
 ## The live yard view
 
-**After every stage transition and every agent you spawn, finish, or lose**, run:
+\`run-check.mjs start\`, \`finish\` and \`verdicts\` redraw the view themselves.
+**After every stage transition**, run:
 
 \`\`\`bash
 node ${SHIPYARD_HOME}/render-report.mjs .shipyard/runs/<run-id>
@@ -156,8 +157,7 @@ files as snapshots that never update. Otherwise give the user the URL. **A view 
 fails to start never stops the run:** give the user the path to \`report.html\`, and
 carry on.
 
-Rendering is one cheap local \`node\` call, so do it liberally. Never read its output
-beyond the path it prints.
+Never read its output beyond the path it prints.
 
 ## Reporting back
 

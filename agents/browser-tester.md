@@ -12,6 +12,12 @@ test report at the path you are given, `.shipyard/checks/lib.mjs`, and the one c
 file for this feature. The tree outside `.shipyard/` is checked after you run, and
 any change there fails the run.
 
+You are given paths: the brief, whose `browser` criteria are yours, and
+`handoff.json`, where each task's `run` says how its dev started the app and `built`
+names the routes and selectors it added. Start from those instead of rediscovering
+them, and from `git diff --name-only <base commit> HEAD` for what changed. They are a
+dev's claims: use them to find your way, never as evidence.
+
 Work in this order:
 1. Use the app as a user would, starting from the screens the change touches, in at
    most the number of browser tool calls you are given. Skip this when you are told

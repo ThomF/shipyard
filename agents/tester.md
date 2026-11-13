@@ -11,7 +11,13 @@ report at the path you are given and, on a re-test of a browser criterion, the c
 file you are told to tighten. The tree outside `.shipyard/` is checked after you
 run, and any change there fails the run.
 
-For `unit`, `api` and `command` criteria: confirm a named test exists and truly
+You are given paths, not pasted text: the brief, whose criteria you take by id or by
+`check` tag, the test output, and `handoff.json`, where `tests` maps each criterion to
+the test file and name its dev gave. Open those tests directly instead of searching.
+The map is a pointer, never evidence: a dev's claim proves nothing until you have
+read the test. A criterion with no entry gets one search, then `fail` or `untested`.
+
+For `unit`, `api` and `command` criteria: confirm the named test exists and truly
 asserts the behaviour, then rely on the test output you are given. Name the test in
 your evidence. Run a command only for a `command` criterion. Start no browser.
 
@@ -27,7 +33,9 @@ Test each criterion as written. Never narrow your check to the part that passes:
 any part of a criterion fails, the criterion is "fail", and flagging it is not
 enough.
 
-Report the actual output as evidence. A criterion you could not test is "untested",
+Report the actual output as evidence, in under 40 words for a pass. For a fail, name
+the file, the assertion or line, and the cause if you can see it, because a dev is
+sent to fix it from your evidence alone. A criterion you could not test is "untested",
 not "pass". Do not round up: a test that passes trivially because it asserts
 nothing is a fail, and you should say why.
 

@@ -109,6 +109,12 @@ describe('install', () => {
     expect(await agent('dev')).toContain('wire it into the start')
     expect(await agent('manager')).toContain('Never give a dev a browser check')
 
+    // The handoff: a dev ends with the block that finish files, and testers read it.
+    for (const key of ['STATUS:', 'COMMIT:', 'TESTS:', 'BUILT:', 'RUN:', 'UNSURE:']) expect(dev).toContain(key)
+    expect(tester).toContain('handoff.json')
+    expect(tester).toContain('never evidence')
+    expect(browser).toContain('handoff.json')
+
     // The report writer and every later reader rely on one shape.
     for (const role of [tester, browser]) expect(role).toContain('{ "criteria": { "AC1": { "verdict"')
 
@@ -137,13 +143,21 @@ describe('build-command', () => {
     expect(command).toContain("Do not re-run a tester's checks")
   })
 
+  it('hands work over by path and by command, not by retyping', () => {
+    expect(command).toContain('run-check.mjs start <run-dir>')
+    expect(command).toContain('run-check.mjs finish <run-dir>')
+    expect(command).toContain('run-check.mjs verdicts <run-dir>')
+    expect(command).toContain('Your task brief is <path>.')
+    expect(command).toContain('red-suite-fix')
+  })
+
   it('leaves role text to the agent definitions', () => {
     expect(command).toContain('shipyard-<role>')
     expect(command).not.toMatch(/## Role: /)
   })
 
   it('stays small enough to load quickly', () => {
-    expect(command.length).toBeLessThan(30_000)
+    expect(command.length).toBeLessThan(32_000)
   })
 })
 

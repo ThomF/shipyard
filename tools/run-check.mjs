@@ -5,9 +5,18 @@
 //
 //   node run-check.mjs brief <run-dir>          check brief.json against the run's size
 //   node run-check.mjs plan <run-dir> [cycle]   check cycles/<n>/plan.json the same way
-//   node run-check.mjs record <run-dir> --agent dev-T1 --role dev [--model sonnet]
-//        [--tokens N] [--tools N] [--ms N] [--fix-of T1]
-//                                               add one agent to state.json's usage
+//                                               and, when it passes, write each task's brief
+//   node run-check.mjs start <run-dir> --agent dev-T1 --role dev [--task T1]
+//                                               put an agent on deck, and print its brief
+//   node run-check.mjs finish <run-dir> --agent dev-T1 --role dev [--task T1]
+//        [--state done|blocked|dead] [--model sonnet] [--tokens N] [--tools N] [--ms N]
+//        [--fix-of T1] [--handoff -]            take it off deck, record what it used, file
+//                                               the handoff it returned (on stdin), and
+//                                               print which tasks are now ready
+//   node run-check.mjs verdicts <run-dir> [cycle]
+//                                               merge the test reports into state.json and
+//                                               print what still fails, and who owns it
+//   node run-check.mjs record <run-dir> ...     finish's usage flags alone
 //   node run-check.mjs usage <run-dir> [--line] print the usage section for report.md,
 //                                               or one line for PROJECT-REPORT.md
 //   node run-check.mjs checks <run-dir> <file>  run every browser check, output to file
@@ -20,8 +29,9 @@
 // No dependencies: this file is copied into ~/.claude/shipyard and run from there.
 
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const SIZES = {
   lite: { criteria: 8, browser: 1, tasks: 2 },
@@ -42,7 +52,59 @@ const readJson = (path) => {
     die(`cannot read ${path}: ${err.message}`)
   }
 }
+const readOptional = (path, fallback) => (existsSync(path) ? readJson(path) : fallback)
+/** Written whole or not at all, so a reader never sees half a file. */
+const writeJson = (path, value) => {
+  writeFileSync(`${path}.tmp`, `${JSON.stringify(value, null, 2)}\n`)
+  renameSync(`${path}.tmp`, path)
+}
 const num = (n) => Number(n).toLocaleString('en-US')
+const now = () => new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+const repoOf = (runDir) => resolve(runDir, '..', '..', '..')
+const cycleDir = (runDir, state, cycle) => join(runDir, 'cycles', String(cycle ?? state.cycle ?? 1))
+
+/**
+ * Several agents can return in one harbormaster turn, so two of these can run at
+ * once. A directory is the lock, because creating one either succeeds or fails.
+ */
+function locked(runDir, change) {
+  const lock = join(runDir, '.state-lock')
+  for (let tries = 0; ; tries++) {
+    try {
+      mkdirSync(lock)
+      break
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err
+      let age = 0
+      try { age = Date.now() - statSync(lock).mtimeMs } catch { continue }
+      // A holder that died left its lock behind. No change here takes ten seconds.
+      if (age > 10_000 || tries > 400) { try { rmdirSync(lock) } catch {} continue }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+    }
+  }
+  try {
+    return change()
+  } finally {
+    try { rmdirSync(lock) } catch {}
+  }
+}
+
+/** Reads state.json, lets `change` edit it, and writes it back, one caller at a time. */
+function updateState(runDir, change) {
+  return locked(runDir, () => {
+    const path = join(runDir, 'state.json')
+    const state = readJson(path)
+    const result = change(state)
+    writeJson(path, state)
+    return result
+  })
+}
+
+/** Redraws the live view. A view that fails to draw never stops a run. */
+function render(runDir) {
+  const script = join(dirname(fileURLToPath(import.meta.url)), 'render-report.mjs')
+  if (existsSync(script)) spawnSync('node', [script, runDir], { stdio: 'ignore', timeout: 20_000 })
+}
 
 function sizeOf(state) {
   const limits = SIZES[state.size]
@@ -165,6 +227,33 @@ function checkPlan(runDir, cycleArg) {
     }
   }
   verdict('plan', problems)
+  writeBriefs(runDir, state, cycle, brief, tasks)
+}
+
+/**
+ * One file per task holding everything its dev needs, so the harbormaster hands
+ * over a path instead of retyping the manager's words into a prompt.
+ */
+function writeBriefs(runDir, state, cycle, brief, tasks) {
+  const dir = join(cycleDir(runDir, state, cycle), 'tasks')
+  mkdirSync(dir, { recursive: true })
+  const repo = repoOf(runDir)
+  const mapPath = join(runDir, 'codebase-map.json')
+  const map = existsSync(mapPath) ? readOptional(mapPath, {}) : null
+  // A task id seen in an earlier cycle starts again here: only this cycle's work counts.
+  const begun = new Set(tasks.filter(t => existsSync(join(dir, `${t.id}.json`))).map(t => t.id))
+  for (const t of tasks) {
+    writeJson(join(dir, `${t.id}.json`), {
+      ...t,
+      criteria: (brief.acceptanceCriteria ?? []).filter(c => t.criteriaIds.includes(c.id)),
+      testCommand: map?.testCommand ?? map?.tests?.testCommand ?? null,
+      codebaseMap: map ? relative(repo, mapPath) : null,
+    })
+  }
+  updateState(runDir, (s) => {
+    s.tasks = Object.fromEntries(tasks.map(t => [t.id, (begun.has(t.id) && s.tasks?.[t.id]) || 'todo']))
+  })
+  console.log(`briefs: ${relative(repo, dir)}/<task-id>.json`)
 }
 
 function flags(args) {
@@ -194,11 +283,8 @@ function budgetLine(state) {
   return total >= budget ? `OVER BUDGET: ${line}` : `run tokens: ${line}`
 }
 
-function record(runDir, args) {
-  const f = flags(args)
-  if (!f.agent || !f.role) die('record needs --agent and --role')
-  const path = join(runDir, 'state.json')
-  const state = readJson(path)
+function usageEntry(f) {
+  if (!f.agent || !f.role) die('needs --agent and --role')
   const entry = {
     agent: f.agent,
     role: f.role,
@@ -208,9 +294,256 @@ function record(runDir, args) {
     durationMs: count(f.ms, 'ms'),
   }
   if (f['fix-of']) entry.fixOf = f['fix-of']
-  state.usage = [...(state.usage ?? []), entry]
-  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`)
-  console.log(budgetLine(state))
+  return entry
+}
+
+function record(runDir, args) {
+  const entry = usageEntry(flags(args))
+  console.log(updateState(runDir, (state) => {
+    state.usage = [...(state.usage ?? []), entry]
+    return budgetLine(state)
+  }))
+}
+
+const planTasks = (runDir, state) => readOptional(join(cycleDir(runDir, state), 'plan.json'), {}).tasks ?? []
+
+/** Tasks nobody has started whose dependencies are all done. */
+function readyTasks(state, tasks) {
+  const at = state.tasks ?? {}
+  return tasks.filter(t => (at[t.id] ?? 'todo') === 'todo' && (t.dependsOn ?? []).every(d => at[d] === 'done')).map(t => t.id)
+}
+
+function start(runDir, args) {
+  const f = flags(args)
+  if (!f.agent || !f.role) die('start needs --agent and --role')
+  const state = updateState(runDir, (s) => {
+    s.active = [...(s.active ?? []).filter(a => a.id !== f.agent), { id: f.agent, role: f.role, task: f.task ?? f['fix-of'] ?? null, since: now() }]
+    if (f.task) s.tasks = { ...s.tasks, [f.task]: 'running' }
+    return s
+  })
+  if (f.task) {
+    // What the tasks before this one really built, which can differ from the plan.
+    const path = join(cycleDir(runDir, state), 'tasks', `${f.task}.json`)
+    if (existsSync(path)) {
+      const brief = readJson(path)
+      const done = readOptional(join(cycleDir(runDir, state), 'handoff.json'), {}).tasks ?? {}
+      const from = (brief.dependsOn ?? []).filter(d => done[d]).map(d => ({ task: d, commit: done[d].commit, built: done[d].built }))
+      if (from.length > 0) writeJson(path, { ...brief, from })
+      console.log(`brief: ${relative(repoOf(runDir), path)}`)
+    }
+  }
+  render(runDir)
+}
+
+const HANDOFF_KEYS = ['STATUS', 'COMMIT', 'TESTS', 'BUILT', 'RUN', 'UNSURE']
+
+/**
+ * Reads the block a dev ends its message with. Keys are upper case at the start of
+ * a line; a key's value runs until the next key. Returns null when there is none.
+ */
+function parseHandoff(text) {
+  const key = new RegExp(`^[\\s>*_\`#-]*(${HANDOFF_KEYS.join('|')})[*_\`]*:[*_\`]*\\s*(.*)$`)
+  const found = {}
+  let current = null
+  for (const line of text.split('\n')) {
+    const m = key.exec(line)
+    if (m) {
+      current = m[1]
+      found[current] = m[2] ? [m[2]] : []
+    } else if (current && line.trim()) {
+      found[current].push(line.trim())
+    }
+  }
+  if (!found.STATUS) return null
+  const value = (k) => (found[k] ?? []).join('\n').trim() || null
+  const clean = (v) => v.trim().replace(/^[`'"]+|[`'"]+$/g, '')
+  const tests = (found.TESTS ?? [])
+    .map(l => l.replace(/^[-*]\s*/, '').split('|').map(clean))
+    .filter(p => p.length >= 2 && p[0] && p[1])
+    .flatMap(([ids, file, ...name]) => ids.split(/[,\s]+/).filter(Boolean).map(id => ({ id, file, name: name.join(' | ') || null })))
+  return {
+    status: /^blocked/i.test(value('STATUS') ?? '') ? 'blocked' : 'done',
+    commit: value('COMMIT'),
+    built: value('BUILT'),
+    run: value('RUN'),
+    unsure: /^(none|nothing|n\/a|-)\.?$/i.test(value('UNSURE') ?? 'none') ? null : value('UNSURE'),
+    tests,
+  }
+}
+
+/** Files one agent's handoff where the next agent reads it. */
+function fileHandoff(runDir, state, f, text) {
+  const parsed = parseHandoff(text)
+  const task = f.task ?? f['fix-of']
+  if (!task) return parsed
+  locked(runDir, () => {
+    const path = join(cycleDir(runDir, state), 'handoff.json')
+    const all = readOptional(path, {})
+    all.tasks ??= {}
+    all.tests ??= {}
+    if (parsed) {
+      const { tests, ...rest } = parsed
+      // A fix keeps what the task's dev said and replaces only what it restates.
+      const kept = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== null))
+      all.tasks[task] = { ...all.tasks[task], ...kept, agent: f.agent }
+      for (const t of tests) {
+        all.tests[t.id] = [...(all.tests[t.id] ?? []).filter(e => e.task !== task || e.file !== t.file), { task, file: t.file, name: t.name }]
+      }
+    } else {
+      all.tasks[task] = { ...all.tasks[task], agent: f.agent, raw: text.trim().slice(0, 1500) }
+    }
+    mkdirSync(dirname(path), { recursive: true })
+    writeJson(path, all)
+    if (parsed?.unsure) {
+      const notesPath = join(runDir, 'report-notes.json')
+      const notes = readOptional(notesPath, {})
+      notes.plan_changes ??= []
+      notes.notes = [...(notes.notes ?? []), `${f.agent}: ${parsed.unsure}`]
+      notes.observations ??= []
+      writeJson(notesPath, notes)
+    }
+  })
+  return parsed
+}
+
+const MAX_DEATHS = 3
+
+function finish(runDir, args) {
+  const f = flags(args)
+  const entry = usageEntry(f)
+  const wanted = f.state ?? 'done'
+  if (!['done', 'blocked', 'dead'].includes(wanted)) die(`--state must be done, blocked or dead (got ${wanted})`)
+  const text = f.handoff === '-' ? readFileSync(0, 'utf8') : ''
+  const before = readJson(join(runDir, 'state.json'))
+  const handoff = text.trim() ? fileHandoff(runDir, before, f, text) : null
+  const lines = []
+
+  const state = updateState(runDir, (s) => {
+    s.usage = [...(s.usage ?? []), entry]
+    s.active = (s.active ?? []).filter(a => a.id !== f.agent)
+    if (wanted === 'dead') {
+      s.deaths = [...(s.deaths ?? []), { agent: f.agent, task: f.task ?? null, at: now() }]
+    }
+    if (f.task) {
+      const deaths = (s.deaths ?? []).filter(d => d.task === f.task).length
+      let to = wanted === 'done' && handoff?.status === 'blocked' ? 'blocked' : wanted
+      if (to === 'dead') {
+        to = deaths >= MAX_DEATHS ? 'blocked' : 'todo'
+        lines.push(to === 'blocked'
+          ? `${f.task} blocked: death ${deaths} of ${MAX_DEATHS}, escalate it at the next triage`
+          : `${f.task} died (${deaths} of ${MAX_DEATHS}): respawn it with a handoff note${entry.model === 'sonnet' ? ', on opus' : ''}`)
+      } else {
+        const named = handoff ? `${handoff.tests.length} test(s) named` : 'no handoff block'
+        lines.push(`${f.task} ${to}${handoff?.commit ? ` (${handoff.commit})` : ''}, ${named}`)
+      }
+      s.tasks = { ...s.tasks, [f.task]: to }
+    }
+    return s
+  })
+
+  if (text.trim() && !handoff) lines.push('handoff: no STATUS block found, so the message was saved as written')
+  if (handoff?.unsure) lines.push('unsure: added to report-notes.json')
+
+  const tasks = planTasks(runDir, state)
+  if (tasks.length > 0 && (f.task || f['fix-of'])) {
+    const at = state.tasks ?? {}
+    const ready = readyTasks(state, tasks)
+    const running = tasks.filter(t => at[t.id] === 'running').map(t => t.id)
+    const blocked = tasks.filter(t => at[t.id] === 'blocked').map(t => t.id)
+    if (ready.length) lines.push(`ready: ${ready.join(' ')}`)
+    if (running.length) lines.push(`running: ${running.join(' ')}`)
+    if (blocked.length) lines.push(`blocked: ${blocked.join(' ')}`)
+    if (tasks.every(t => at[t.id] === 'done')) lines.push(`build complete: all ${tasks.length} task(s) done`)
+  }
+
+  // Separation of duties, checked rather than trusted. A dev still on deck has
+  // files half written, so the check waits for a tester that runs alone.
+  if (/tester/.test(f.role) && !(state.active ?? []).some(a => a.role === 'dev')) {
+    const r = spawnSync('git', ['status', '--porcelain', '--', '.', ':(exclude).shipyard'], { cwd: repoOf(runDir), encoding: 'utf8' })
+    const changed = (r.stdout ?? '').split('\n').filter(Boolean)
+    if (r.status === 0) lines.push(changed.length ? `TREE MODIFIED outside .shipyard/: ${changed.slice(0, 10).join(', ')}` : 'tree clean')
+  }
+
+  lines.push(budgetLine(state))
+  console.log(lines.join('\n'))
+  render(runDir)
+}
+
+/** Testers write criteria keyed by id, or sometimes as a list of { id, verdict, evidence }. */
+function criteriaById(report) {
+  const { criteria } = report ?? {}
+  if (!Array.isArray(criteria)) return criteria ?? {}
+  return Object.fromEntries(criteria.filter(c => c?.id).map(({ id, ...result }) => [id, result]))
+}
+
+/**
+ * The testers' last word on each criterion, written into state.json. Reports are
+ * read in order, because a re-test lists only what it settled. Prints only what the
+ * harbormaster must act on, so it never has to read a report.
+ */
+function verdicts(runDir, cycleArg) {
+  const before = readJson(join(runDir, 'state.json'))
+  const dir = cycleDir(runDir, before, cycleArg)
+  const reports = (existsSync(dir) ? readdirSync(dir) : [])
+    .map(name => /^test-report(?:-(browser)|-fix(\d+))?\.json$/.exec(name))
+    .filter(Boolean)
+    .map(m => ({ name: m[0], order: m[2] ? 1 + Number(m[2]) : m[1] ? 1 : 0 }))
+    .sort((a, b) => a.order - b.order)
+    .map(r => readJson(join(dir, r.name)))
+  if (reports.length === 0) die(`no test report in ${dir}`)
+
+  const results = Object.assign({}, ...reports.map(criteriaById))
+  const criteria = readOptional(join(runDir, 'brief.json'), {}).acceptanceCriteria ?? []
+  const ids = criteria.length ? criteria.map(c => c.id) : Object.keys(results)
+  const verdictOf = (id) => {
+    const r = results[id]
+    const v = typeof r === 'string' ? r : r?.verdict
+    return v === 'pass' || v === 'fail' ? v : 'untested'
+  }
+  updateState(runDir, (s) => {
+    s.criteria = { ...s.criteria, ...Object.fromEntries(ids.map(id => [id, verdictOf(id)])) }
+  })
+
+  const seen = reports.flatMap(r => (Array.isArray(r.observations) ? r.observations : [])).filter(o => o?.what)
+  let added = 0
+  if (seen.length > 0) {
+    locked(runDir, () => {
+      const notesPath = join(runDir, 'report-notes.json')
+      const notes = readOptional(notesPath, {})
+      notes.plan_changes ??= []
+      notes.notes ??= []
+      notes.observations ??= []
+      for (const o of seen) {
+        if (notes.observations.some(n => n.what === o.what)) continue
+        notes.observations.push(o)
+        added++
+      }
+      writeJson(notesPath, notes)
+    })
+  }
+
+  const tasks = planTasks(runDir, before)
+  const open = ids.filter(id => verdictOf(id) !== 'pass')
+  const lines = [open.length ? `criteria: ${ids.length - open.length}/${ids.length} pass` : `ALL PASS: ${ids.length}/${ids.length}`]
+  const owners = new Map()
+  for (const id of open) {
+    const owning = tasks.filter(t => (t.criteriaIds ?? []).includes(id)).map(t => t.id)
+    owners.set(id, owning)
+    const tag = criteria.find(c => c.id === id)?.check
+    const r = results[id]
+    const evidence = r === undefined ? 'no tester reported on it' : String((typeof r === 'object' ? r?.evidence : '') ?? '').replace(/\s+/g, ' ').slice(0, 300)
+    lines.push(`${verdictOf(id)} ${id}${tag ? ` (${tag})` : ''}${owning.length ? ` owner ${owning.join(',')}` : ''}: ${evidence}`)
+  }
+  // One of the three conditions for a direct fix. The other two are a judgement.
+  const single = [...new Set([...owners.values()].filter(o => o.length === 1).map(o => o[0]))]
+  if (open.length > 0 && single.length > 0 && [...owners.values()].every(o => o.length === 1)) {
+    lines.push(`one owner each: ${single.join(' ')} (a direct fix is allowed if this is the first round and the evidence names the cause)`)
+  }
+  const high = seen.filter(o => /high/i.test(o.severity ?? ''))
+  if (added) lines.push(`observations: ${added} added to report-notes.json${high.length ? `, ${high.length} high severity` : ''}`)
+  for (const o of high) lines.push(`high: ${String(o.what).replace(/\s+/g, ' ').slice(0, 200)}`)
+  console.log(lines.join('\n'))
+  render(runDir)
 }
 
 function table(headers, rows) {
@@ -316,7 +649,7 @@ function usageReport(runDir, args) {
  */
 function runChecks(runDir, outFile) {
   if (!outFile) die('checks needs an output file')
-  const repo = resolve(runDir, '..', '..', '..')
+  const repo = repoOf(runDir)
   const dir = join(repo, '.shipyard', 'checks')
   const files = existsSync(dir)
     ? readdirSync(dir).filter(f => f.endsWith('.check.mjs') || f === 'browser.mjs').sort()
@@ -343,11 +676,14 @@ function runChecks(runDir, outFile) {
 }
 
 const [command, runDir, ...rest] = process.argv.slice(2)
-if (!command || !runDir) die('usage: run-check.mjs brief|plan|record|usage|checks <run-dir> [...]')
+if (!command || !runDir) die('usage: run-check.mjs brief|plan|start|finish|verdicts|record|usage|checks <run-dir> [...]')
 if (!existsSync(runDir)) die(`no such run directory: ${runDir}`)
 
 if (command === 'brief') checkBrief(runDir)
 else if (command === 'plan') checkPlan(runDir, rest[0])
+else if (command === 'start') start(runDir, rest)
+else if (command === 'finish') finish(runDir, rest)
+else if (command === 'verdicts') verdicts(runDir, rest[0])
 else if (command === 'record') record(runDir, rest)
 else if (command === 'usage') usageReport(runDir, rest)
 else if (command === 'checks') runChecks(runDir, rest[0])
