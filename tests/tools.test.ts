@@ -151,6 +151,11 @@ describe('build-command', () => {
     expect(command).toContain('red-suite-fix')
   })
 
+  it('never waits on an agent it has already heard from', () => {
+    expect(command).toContain('Never wait for figures.')
+    expect(command).toContain('Nothing wakes you once your turn ends.')
+  })
+
   it('leaves role text to the agent definitions', () => {
     expect(command).toContain('shipyard-<role>')
     expect(command).not.toMatch(/## Role: /)

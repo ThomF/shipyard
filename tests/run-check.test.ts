@@ -353,6 +353,32 @@ describe('run-check handoff', () => {
     ])
   })
 
+  it('finishes on the report and fills the figures in when they arrive later', async () => {
+    const dir = await planned()
+    check('start', dir, '--agent', 'dev-T1', '--role', 'dev', '--task', 'T1')
+    const first = checkWith(HANDOFF, 'finish', dir, '--agent', 'dev-T1', '--role', 'dev', '--task', 'T1', '--model', 'opus', '--handoff', '-')
+    expect(first.out).toContain('ready: T2')
+
+    check('start', dir, '--agent', 'dev-T2', '--role', 'dev', '--task', 'T2')
+    const late = check('finish', dir, '--agent', 'dev-T1', '--role', 'dev', '--task', 'T1', '--tokens', '900', '--tools', '7', '--ms', '5000')
+    expect(late.out).toContain('dev-T1 was already finished: figures filled in')
+    expect(late.out).toContain('run tokens: 900')
+    expect(late.out).not.toContain('ready:')
+
+    const state = await json(join(dir, 'state.json'))
+    expect(state.usage).toEqual([{ agent: 'dev-T1', role: 'dev', model: 'opus', tokens: 900, toolUses: 7, durationMs: 5000 }])
+    expect(state.tasks).toMatchObject({ T1: 'done', T2: 'running' })
+    expect(state.deaths ?? []).toHaveLength(0)
+  })
+
+  it('counts a respawn under the same name as a new agent', async () => {
+    const dir = await planned()
+    check('finish', dir, '--agent', 'dev-T1', '--role', 'dev', '--task', 'T1', '--state', 'dead')
+    check('start', dir, '--agent', 'dev-T1', '--role', 'dev', '--task', 'T1')
+    expect(check('finish', dir, '--agent', 'dev-T1', '--role', 'dev', '--task', 'T1', '--tokens', '5').out).toContain('T1 done')
+    expect((await json(join(dir, 'state.json'))).usage).toHaveLength(2)
+  })
+
   it('keeps a message with no block as written, and blocks a task that says it is blocked', async () => {
     const dir = await planned()
     const loose = checkWith('All done, tests pass.', 'finish', dir, '--agent', 'dev-T1', '--role', 'dev', '--task', 'T1', '--handoff', '-')

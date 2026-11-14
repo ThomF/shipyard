@@ -66,9 +66,15 @@ node <shipyard>/tools/run-check.mjs finish <run-dir> --agent dev-T1 --role dev -
 SHIPYARD_HANDOFF
 ```
 
-- Run `start` with the dispatch, and `finish` the moment the agent returns or dies,
-  with the figures from its completion notification. Leave out any figure it did not
-  give; it is stored as null. **Never estimate one.**
+- Run `start` with the dispatch. Run `finish` **in the same turn as the first
+  message an agent sends back**, then dispatch what it prints as `ready:`.
+- **Never wait for figures.** An agent's report often arrives before the
+  notification that carries its tokens, tool uses and time. Finish on the report
+  with the figures left out; when they come, run `finish` again with them, and it
+  only fills them in. Leave out any figure you were not given. **Never estimate one.**
+- **Nothing wakes you once your turn ends.** Never end a turn while an agent's
+  return is unrecorded or a task is `ready`, and never say you will act when
+  something arrives. End a turn only when every next step waits on a running agent.
 - `--task` is for a dev building a plan task; a fix agent takes `--fix-of T1`
   instead. Only a dev has a handoff to pipe. `--state dead` records a death.
 - Act on what `finish` prints, such as `ready:` and `TREE MODIFIED`.

@@ -34,6 +34,10 @@ RUN: <for a browser criterion only: how to start the app on a spare port against
 UNSURE: <anything you doubt or that does not work, or none>
 ```
 
+Send that report last and by itself: after your tests have run and your commit has
+returned, never in the same step as another command, because you cannot name a
+commit you have not seen.
+
 Give one `TESTS` line for each criterion and test that proves it. Name no test for a
 criterion you did not test: a tester reads each one, and a wrong line costs a fix round.
 

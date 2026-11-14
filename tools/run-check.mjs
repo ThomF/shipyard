@@ -12,7 +12,8 @@
 //        [--state done|blocked|dead] [--model sonnet] [--tokens N] [--tools N] [--ms N]
 //        [--fix-of T1] [--handoff -]            take it off deck, record what it used, file
 //                                               the handoff it returned (on stdin), and
-//                                               print which tasks are now ready
+//                                               print which tasks are now ready. A second
+//                                               call for the same agent only adds figures
 //   node run-check.mjs verdicts <run-dir> [cycle]
 //                                               merge the test reports into state.json and
 //                                               print what still fails, and who owns it
@@ -415,6 +416,20 @@ function finish(runDir, args) {
   if (!['done', 'blocked', 'dead'].includes(wanted)) die(`--state must be done, blocked or dead (got ${wanted})`)
   const text = f.handoff === '-' ? readFileSync(0, 'utf8') : ''
   const before = readJson(join(runDir, 'state.json'))
+
+  // An agent's report can arrive before its figures do. The harbormaster finishes
+  // it on the report, so that nothing waits, and calls again when the figures come.
+  // That second call only fills them in. A death or a handoff is always news.
+  const onDeck = (before.active ?? []).some(a => a.id === f.agent)
+  if (!onDeck && wanted !== 'dead' && !text.trim() && (before.usage ?? []).some(u => u.agent === f.agent)) {
+    console.log(updateState(runDir, (s) => {
+      const row = s.usage.findLast(u => u.agent === f.agent)
+      for (const k of ['model', 'tokens', 'toolUses', 'durationMs']) row[k] ??= entry[k]
+      return `${f.agent} was already finished: figures filled in, nothing else changed\n${budgetLine(s)}`
+    }))
+    render(runDir)
+    return
+  }
   const handoff = text.trim() ? fileHandoff(runDir, before, f, text) : null
   const lines = []
 
